@@ -1,1 +1,20 @@
 # InternRAG
+
+## Installation
+**Linux:** all you have to do is to create a venv and install the needed dependencies:
+```bash
+python3.12 -m venv venv
+source venv/bin/activate
+pip install vllm ipykernel vllm-haystack qdrant-haystack docling-haystack
+```
+**MacOS:** this time it is a little bit more complex:
+```bash
+curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh | bash
+source ~/.venv-vllm-metal/bin/activate
+pip install ipykernel vllm-haystack qdrant-haystack docling-haystack
+```
+You should then be able to select the kernel from the env.
+
+For MacOS, you should lean on the official GitHub repository: https://github.com/vllm-project/vllm-metal (check the supported models on https://docs.vllm.ai/projects/vllm-metal/en/latest/supported_models/).
+
+> Note: I am probably forgetting a lot of packages
