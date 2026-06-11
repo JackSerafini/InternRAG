@@ -219,6 +219,6 @@ __marimo__/
 
 # Custom
 open_ragbench
-*.yml
-*.yaml
 .DS_Store
+.deepeval
+.qdrant
