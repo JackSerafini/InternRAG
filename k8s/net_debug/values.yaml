@@ -1,0 +1,31 @@
+# netshoot-sidecar.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: net-debug
+ namespace: orfeo-rag
+ labels:
+   app: net-debug
+spec:
+ replicas: 1
+ selector:
+   matchLabels:
+     app: net-debug
+ template:
+   metadata:
+     labels:
+       app: net-debug
+   spec:
+     containers:
+       - name: netshoot
+         image: nicolaka/netshoot
+         command: ["/bin/bash"]
+         args: ["-c", "while true; do ping localhost; sleep 60;done"]
+         resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 500m
+            memory: 1Gi
