@@ -1,0 +1,45 @@
+ollama:
+  enabled: false
+
+pipelines:
+  enabled: false
+
+websocket:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 1
+    memory: 2Gi
+
+copyAppData:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+hostAliases:
+  - ip: "10.128.18.132"
+    hostnames:
+      - "auth.local"
+
+sso:
+  enabled: true
+  enableSignup: true
+  oidc:
+    enabled: true
+    clientId: "open-webui"
+    clientExistingSecret: "open-webui-oidc"
+    clientExistingSecretKey: "client-secret"
+    providerUrl: "http://keycloak-keycloakx-http.orfeo-rag.svc.cluster.local/realms/orfeo/.well-known/openid-configuration"
+    providerName: "Keycloak"
+
+openaiBaseApiUrl: "https://orfeo-llm.areasciencepark.it/vllm/v1"
+openaiApiKeyExistingSecret: "vllm-api-key"
+openaiApiKeyExistingSecretKey: "api-key"

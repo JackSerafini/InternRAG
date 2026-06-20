@@ -1,0 +1,16 @@
+persistence:
+  size: 20Gi
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 1
+    memory: 2Gi
+
+config:
+  cluster:
+    enabled: false
+
+updateVolumeFsOwnership: false

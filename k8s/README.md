@@ -1,3 +1,9 @@
+### TODO
+
+Update all yaml files with comments explaining choices.
+
+# Introduction
+
 Each app has its yaml file(s) inside of its folder: all the apps have a `values.yaml` to customize the values of the helm charts, but only some apps have an `ingress.yaml` to handle traffic.
 
 ```
@@ -31,7 +37,7 @@ kubectl apply -f k8s/net_debug/values.yaml
 
 # Keycloak
 
-First, add the repo to use Keycloakx (community-based implementation of keycloak) and then install it using the `values.yaml`:
+First, add the [Keycloakx repo](https://github.com/codecentric/helm-charts/tree/master/charts/keycloakx) (community-based implementation of keycloak) and then install it using the `values.yaml`:
 ```bash
 helm repo add codecentric https://codecentric.github.io/helm-charts
 helm repo update
@@ -45,7 +51,7 @@ helm uninstall keycloak
 
 You then apply the ingress configuration in order to access it without port-forwarding:
 ```bash
-kubectl apply -f k8s/open_webui/ingress.yaml -f k8s/keycloak/ingress.yaml 
+kubectl apply -f k8s/keycloak/ingress.yaml
 ```
 
 and add the following configuration to `/etc/hosts/` for ease-of-use:
@@ -88,14 +94,36 @@ kubectl create secret generic open-webui-oidc --from-literal=client-secret='XXX'
 You then need to either install Open WebUI or upgrade it with the helm command:
 ```bash
 helm upgrade --install open-webui open-webui/open-webui -f k8s/open_webui/values.yaml
+# kubectl apply -f k8s/open_webui/ingress.yaml # if not already done
+# kubectl create secret generic vllm-api-key --from-literal=api-key='XXX' # if not already done
 ```
 
 You can test it all works by searching *chat.local* and trying to sign-in via Keycloak.
 
 # Open WebUI
 
+First, add the [Open WebUI repo](https://github.com/open-webui/helm-charts/tree/main/charts/open-webui) and then install it using the `values.yaml`:
 ```bash
 helm repo add open-webui https://helm.openwebui.com/
 helm repo update
 helm upgrade --install open-webui open-webui/open-webui -f k8s/open_webui/values.yaml
 ```
+
+To uninstall the deployment:
+```bash
+helm uninstall open-webui
+# kubectl delete pvc -l app.kubernetes.io/instance=open-webui # perhaps not necessary
+```
+
+You then apply the ingress configuration in order to access it without port-forwarding:
+```bash
+kubectl apply -f k8s/open_webui/ingress.yaml
+```
+
+Since Open WebUI runs using the models hosted on Orfeo, it is mandatory to create a secret containing the token to actually access the models (copy the output of `request_token.bash`):
+```bash
+kubectl create secret generic vllm-api-key --from-literal=api-key='XXX'
+```
+
+# Qdrant
+
