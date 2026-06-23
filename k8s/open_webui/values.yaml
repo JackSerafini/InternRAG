@@ -7,9 +7,11 @@ pipelines:
 websocket:
   enabled: false
 
+# TODO: handle persistence better
+
 resources:
   requests:
-    cpu: 500m
+    cpu: 1
     memory: 2Gi
   limits:
     cpu: 1
@@ -40,6 +42,12 @@ sso:
     providerUrl: "http://keycloak-keycloakx-http.orfeo-rag.svc.cluster.local/realms/orfeo/.well-known/openid-configuration"
     providerName: "Keycloak"
 
-openaiBaseApiUrl: "https://orfeo-llm.areasciencepark.it/vllm/v1"
-openaiApiKeyExistingSecret: "vllm-api-key"
-openaiApiKeyExistingSecretKey: "api-key"
+# openaiBaseApiUrl: "https://orfeo-llm.areasciencepark.it/vllm/v1"
+# openaiApiKeyExistingSecret: "vllm-api-key"
+# openaiApiKeyExistingSecretKey: "api-key"
+
+openaiBaseApiUrls:
+  - "https://orfeo-llm.areasciencepark.it/vllm/v1"
+  - "http://rag-retrieval.orfeo-rag.svc.cluster.local:8000/v1"
+openaiApiKeysExistingSecret: "vllm-api-keys"
+openaiApiKeysExistingSecretKey: "api-keys"

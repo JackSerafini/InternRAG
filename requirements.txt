@@ -1,0 +1,8 @@
+# this file was mainly created for Docker, but it should work for local dev as well (probably no need for fastapi)
+fastapi[standard]
+uvicorn
+pydantic
+
+vllm-haystack
+qdrant-haystack
+docling-haystack
