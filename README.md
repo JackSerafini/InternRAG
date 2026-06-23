@@ -29,3 +29,31 @@ You should then be able to select the kernel from the env.
 For MacOS, you should lean on the official GitHub repository: https://github.com/vllm-project/vllm-metal (check the supported models on https://docs.vllm.ai/projects/vllm-metal/en/latest/supported_models/).
 
 > Note: I am probably forgetting a lot of packages
+
+# RAG Pipeline
+
+### Indexing
+
+### Retrieval
+
+# Docker
+
+By running the following commands, images are built and directly pushed to DockerHub (`--push`) so that it is possible for the deployment to use that image when deployed. `--platform linux/amd64` was added so that the image could run on the cluster.
+
+### Indexing
+
+```bash
+docker buildx build --platform linux/amd64 -t your-name/your-project:latest -f Dockerfile.indexing --push .
+```
+
+### Retrieval
+
+```bash
+docker buildx build --platform linux/amd64 -t your-name/your-project:latest -f Dockerfile.retrieval --push .
+```
+
+### Upload UI
+
+```bash
+docker buildx build --platform linux/amd64 -t your-name/your-project:latest -f Dockerfile.upload --push .
+```
