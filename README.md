@@ -9,6 +9,7 @@
 - [ ] Test with real data
 - [ ] Solve answer token-by-token
 - [ ] Add ingress to upload UI
+- [ ] Make pipeline async -> study
 
 ## Installation
 **Linux:** all you have to do is to create a venv and install the needed dependencies:

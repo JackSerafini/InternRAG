@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-indexing
+  namespace: orfeo-rag
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-indexing
+  
+  template:
+    metadata:
+      labels:
+        app: rag-indexing
+    
+    spec:
+      containers:
+        - name: rag-indexing
+          image: jackserafini/rag-indexing:latest
+
+          ports:
+            - containerPort: 8001
+
+          env:
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vllm-api-key
+                  key: api-key
+          
+          envFrom:
+            - configMapRef:
+                name: rag-config
+          
+          resources:
+            requests:
+              cpu: 1
+              memory: 4Gi
+            limits:
+              cpu: 1 # or more?
+              memory: 4Gi
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 20

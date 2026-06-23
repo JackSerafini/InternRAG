@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-retrieval
+  namespace: orfeo-rag
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-retrieval
+  
+  template:
+    metadata:
+      labels:
+        app: rag-retrieval
+    
+    spec:
+      containers:
+        - name: rag-retrieval
+          image: jackserafini/rag-retrieval:latest
+
+          ports:
+            - containerPort: 8000
+
+          env:
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vllm-api-key
+                  key: api-key
+          
+          envFrom:
+            - configMapRef:
+                name: rag-config
+            - secretRef:
+                name: vllm-api-key
+          
+          resources:
+            requests:
+              cpu: 1
+              memory: 2Gi
+            limits:
+              cpu: 1
+              memory: 2Gi
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
