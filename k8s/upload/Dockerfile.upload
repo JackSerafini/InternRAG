@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /srv
+
+RUN pip install --no-cache-dir requests gradio
+
+COPY upload.py .
+
+EXPOSE 7860
+
+CMD ["python", "upload.py"]

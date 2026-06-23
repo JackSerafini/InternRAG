@@ -1,5 +1,15 @@
 # InternRAG
 
+### TODO
+
+- [ ] Check persistence of Qdrant
+- [ ] Solve Docling PDF error
+- [ ] Check persistence of Keycloak
+- [ ] Improve UI of upload -> is the service okay like this?
+- [ ] Test with real data
+- [ ] Solve answer token-by-token
+- [ ] Add ingress to upload UI
+
 ## Installation
 **Linux:** all you have to do is to create a venv and install the needed dependencies:
 ```bash

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-upload
+  namespace: orfeo-rag
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-upload
+  
+  template:
+    metadata:
+      labels:
+        app: rag-upload
+
+    spec:
+      containers:
+        - name: rag-upload
+          image: jackserafini/rag-upload:latest
+
+          ports:
+            - containerPort: 7860
+          
+          env:
+            - name: INDEXING_SERVICE_URL
+              value: "http://rag-indexing.orfeo-rag.svc.cluster.local:8001"
+          
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 5
+            periodSeconds: 10

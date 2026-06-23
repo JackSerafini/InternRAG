@@ -1,6 +1,7 @@
 ### TODO
 
-Update all yaml files with comments explaining choices.
+- [ ] Update all yaml files with comments explaining choices.
+- [ ] Update README with new deployments
 
 # Introduction
 
@@ -28,7 +29,7 @@ k8s
 
 # Net Debug
 
-For now, it is the only one that was not set using helm. To change the values, first modify its `values.yaml`, and then run 
+To apply the deployment, run:
 ```bash
 kubectl apply -f k8s/net_debug/values.yaml
 ```
@@ -124,6 +125,33 @@ Since Open WebUI runs using the models hosted on Orfeo, it is mandatory to creat
 ```bash
 kubectl create secret generic vllm-api-key --from-literal=api-key='XXX'
 ```
+> Actually, right now it should be `kubectl create secret generic vllm-api-keys --from-literal=api-keys='XXX;dummy'` because we now have two URLs (one for the models and one for the RAG) and each one needs its key (actually, only the first one needs the key to access the models, because the second has the key "hardcoded" in the script but it still needs a dummy openAI key)
 
 # Qdrant
 
+# Retrieval
+
+To apply the deployment, run:
+```bash
+kubectl apply -f k8s/retrieval
+```
+
+To uninstall the deployment:
+```bash
+kubectl delete -f k8s/retrieval
+```
+
+Okay, first of all I implemented the retrieval pipeline inside of `app/retrieval.py`.
+
+Before that, by calling `app/common.py`, we get all the env variables, such as *API_URL* (where the models run), *EMBED_MODEL_ID* (the embedding model), *GENERATION_MODEL_ID* (the generation model), *get_document_store* (where the embeddings are), *get_vllm_secret* (the vLLM token).
+
+Done that, thanks to `FastAPI`, the pipeline was exposed as an OpenAI-compatible API in order for OpenWebUI to use it as a "model". Three endpoints were used:
+1. `/health`
+2. `/v1/models`
+3. `/v1/chat/completions`
+
+> Right now, the streaming is by block and not token-by-token -> TODO
+
+The script is then built into a Docker image (`Dockerfile.retrieval`), using `python:3.12-slim` as the base image. All the dependencies are installed, and the service is run using `uvicorn` on the port 8000.
+
+# Indexing
