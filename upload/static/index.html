@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Document Indexing</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --border: #2a2e3a;
+    --text: #e6e8ec;
+    --text-dim: #8b92a3;
+    --accent: #5b8cff;
+    --accent-dim: #3a5bb8;
+    --ok: #4cd17a;
+    --err: #ff6b6b;
+    --radius: 10px;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: min(640px, 90vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: clamp(24px, 4vw, 48px);
+  }
+
+  @media (min-width: 1400px) {
+    .card { max-width: 760px; }
+  }
+
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+
+  .sub {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin: 0 0 24px;
+    line-height: 1.5;
+  }
+
+  .dropzone {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+
+  .dropzone:hover,
+  .dropzone.drag {
+    border-color: var(--accent);
+    background: rgba(91, 140, 255, 0.06);
+  }
+
+  .dropzone input { display: none; }
+
+  .dz-label {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .dz-label strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .filename {
+    margin-top: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  .types {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 11px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: #0f1115;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+
+  button:hover:not(:disabled) { background: #74a0ff; }
+
+  button:disabled {
+    background: var(--accent-dim);
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+
+  .status {
+    margin-top: 16px;
+    font-size: 13px;
+    line-height: 1.5;
+    display: none;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .status.show { display: block; }
+  .status.ok { color: var(--ok); border-color: rgba(76, 209, 122, 0.35); }
+  .status.err { color: var(--err); border-color: rgba(255, 107, 107, 0.35); }
+  .status.pending { color: var(--text-dim); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Document indexing</h1>
+    <p class="sub">Upload a document to add it to the knowledge base.</p>
+
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" accept=".pdf,.docx,.pptx,.html,.md,.txt" />
+      <div class="dz-label"><strong>Click to choose a file</strong> or drag it here</div>
+      <div class="filename" id="filename"></div>
+      <div class="types">.pdf · .docx · .pptx · .html · .md · .txt</div>
+    </div>
+
+    <button id="uploadBtn" disabled>Index document</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+    const filenameEl = document.getElementById("filename");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const statusEl = document.getElementById("status");
+
+    let selectedFile = null;
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = "status show " + kind;
+    }
+
+    function clearStatus() {
+      statusEl.className = "status";
+    }
+
+    function selectFile(file) {
+      selectedFile = file;
+      filenameEl.textContent = file ? file.name : "";
+      uploadBtn.disabled = !file;
+      clearStatus();
+    }
+
+    dropzone.addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", () => {
+      selectFile(fileInput.files[0] || null);
+    });
+
+    ["dragenter", "dragover"].forEach((evt) =>
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.add("drag");
+      })
+    );
+
+    ["dragleave", "drop"].forEach((evt) =>
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove("drag");
+      })
+    );
+
+    dropzone.addEventListener("drop", (e) => {
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        fileInput.files = e.dataTransfer.files;
+        selectFile(file);
+      }
+    });
+
+    uploadBtn.addEventListener("click", async () => {
+      if (!selectedFile) return;
+
+      uploadBtn.disabled = true;
+      setStatus("Indexing — this can take a while for large files…", "pending");
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      try {
+        const resp = await fetch("/upload", { method: "POST", body: formData });
+        const data = await resp.json();
+
+        if (data.ok) {
+          setStatus("✓ " + data.message, "ok");
+        } else {
+          setStatus("✗ " + data.message, "err");
+        }
+      } catch (err) {
+        setStatus("✗ Request failed: " + err.message, "err");
+      } finally {
+        uploadBtn.disabled = !selectedFile;
+      }
+    });
+  </script>
+</body>
+</html>
