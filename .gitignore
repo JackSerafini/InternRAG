@@ -219,6 +219,7 @@ __marimo__/
 
 # Custom
 open_ragbench
+subset_test_1000
 .DS_Store
 .deepeval
 .qdrant
