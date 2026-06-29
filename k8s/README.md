@@ -10,9 +10,13 @@ Each app has its yaml file(s) inside of its folder: all the apps have a `values.
 ```
 k8s
 ├── README.md
+├── config.yaml
 ├── hello_world
 │   ├── hello-deployment.yaml
 │   └── hello-service.yaml
+├── indexing
+│   ├── service.yaml
+│   └── values.yaml
 ├── keycloak
 │   ├── ingress.yaml
 │   └── values.yaml
@@ -21,7 +25,13 @@ k8s
 ├── open_webui
 │   ├── ingress.yaml
 │   └── values.yaml
-└── qdrant
+├── qdrant
+│   └── values.yaml
+├── retrieval
+│   ├── service.yaml
+│   └── values.yaml
+└── upload
+    ├── service.yaml
     └── values.yaml
 ```
 
@@ -125,7 +135,7 @@ Since Open WebUI runs using the models hosted on Orfeo, it is mandatory to creat
 ```bash
 kubectl create secret generic vllm-api-key --from-literal=api-key='XXX'
 ```
-> Actually, right now it should be `kubectl create secret generic vllm-api-keys --from-literal=api-keys='XXX;dummy'` because we now have two URLs (one for the models and one for the RAG) and each one needs its key (actually, only the first one needs the key to access the models, because the second has the key "hardcoded" in the script but it still needs a dummy openAI key)
+> Actually, right now it should also be `kubectl create secret generic vllm-api-keys --from-literal=api-keys='XXX;dummy'` because we now have two URLs (one for the models and one for the RAG) and each one needs its key (actually, only the first one needs the key to access the models, because the second has the key "hardcoded" in the script but it still needs a dummy openAI key)
 
 # Qdrant
 
