@@ -18,10 +18,10 @@ spec:
     spec:
       containers:
         - name: rag-retrieval
-          image: jackserafini/rag-retrieval:latest
+          image: jackserafini/rag-retrieval:v2-haystack
 
           ports:
-            - containerPort: 8000
+            - containerPort: 1416
 
           env:
             - name: VLLM_API_KEY
@@ -47,13 +47,13 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8000
+              port: 1416
             initialDelaySeconds: 5
             periodSeconds: 10
           
           livenessProbe:
             httpGet:
               path: /health
-              port: 8000
+              port: 1416
             initialDelaySeconds: 10
             periodSeconds: 20
