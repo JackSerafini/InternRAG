@@ -6,8 +6,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --default-timeout=1200 -r requirements.txt
 # --default-timeout=1200 in case it doesn't download packages fast enough
 
+# app/common.py (shared config) is still used by the pipeline wrapper
 COPY app/ ./app/
+COPY pipeline_wrappers/ ./pipeline_wrappers/
 
-EXPOSE 8000
+EXPOSE 1416
 
-CMD ["uvicorn", "app.retrieval:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hayhooks auto-discovers and deploys every wrapper under this directory at startup
+ENV HAYHOOKS_PIPELINES_DIR=/srv/pipeline_wrappers
+ENV HAYHOOKS_HOST=0.0.0.0
+ENV HAYHOOKS_PORT=1416
+ENV PYTHONPATH=/srv
+
+CMD ["hayhooks", "run"]

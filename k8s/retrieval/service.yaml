@@ -9,5 +9,5 @@ spec:
     app: rag-retrieval
   
   ports:
-    - port: 8000
-      targetPort: 8000
+    - port: 1416
+      targetPort: 1416

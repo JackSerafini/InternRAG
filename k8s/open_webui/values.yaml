@@ -48,6 +48,6 @@ sso:
 
 openaiBaseApiUrls:
   - "https://orfeo-llm.areasciencepark.it/vllm/v1"
-  - "http://rag-retrieval.orfeo-rag.svc.cluster.local:8000/v1"
+  - "http://rag-retrieval.orfeo-rag.svc.cluster.local:1416/v1"
 openaiApiKeysExistingSecret: "vllm-api-keys"
 openaiApiKeysExistingSecretKey: "api-keys"
