@@ -46,14 +46,14 @@ spec:
           
           readinessProbe:
             httpGet:
-              path: /health
+              path: /status
               port: 1416
             initialDelaySeconds: 5
             periodSeconds: 10
           
           livenessProbe:
             httpGet:
-              path: /health
+              path: /status
               port: 1416
             initialDelaySeconds: 10
             periodSeconds: 20

@@ -108,6 +108,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 pipeline_run_args={
                     "query_embedder": {"text": question},
                     "prompt_builder": {"question": question},
+                    "answer_builder": {"query": question},
                 },
                 on_pipeline_end=on_pipeline_end,
             )
