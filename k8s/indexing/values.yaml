@@ -18,10 +18,10 @@ spec:
     spec:
       containers:
         - name: rag-indexing
-          image: jackserafini/rag-indexing:latest
+          image: jackserafini/rag-indexing:test
 
           ports:
-            - containerPort: 8001
+            - containerPort: 1416
 
           env:
             - name: VLLM_API_KEY
@@ -44,14 +44,14 @@ spec:
           
           readinessProbe:
             httpGet:
-              path: /health
-              port: 8001
+              path: /status
+              port: 1416
             initialDelaySeconds: 5
             periodSeconds: 10
           
           livenessProbe:
             httpGet:
-              path: /health
-              port: 8001
+              path: /status
+              port: 1416
             initialDelaySeconds: 10
             periodSeconds: 20

@@ -6,8 +6,4 @@ metadata:
 
 data:
   VLLM_API_URL: "https://orfeo-llm.areasciencepark.it/vllm/v1"
-  EMBED_MODEL_ID: "Qwen/Qwen3-Embedding-4B"
-  GENERATION_MODEL_ID: "Qwen/Qwen3.5-9B"
-  EMBEDDING_DIM: "2560"
   QDRANT_URL: "http://qdrant.orfeo-rag.svc.cluster.local:6333"
-  QDRANT_COLLECTION: "documents"

@@ -1,25 +1,64 @@
 """
 Hayhooks PipelineWrapper for the RAG retrieval pipeline.
 """
+import os
 from collections.abc import Generator
 from typing import Union
 
 from haystack import Pipeline
+from haystack.utils import Secret
 from haystack.components.builders import AnswerBuilder, ChatPromptBuilder
 from haystack.dataclasses import ChatMessage
 from haystack_integrations.components.embedders.vllm import VLLMTextEmbedder
 from haystack_integrations.components.generators.vllm import VLLMChatGenerator
+from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 from haystack_integrations.components.retrievers.qdrant import QdrantEmbeddingRetriever
 
 from hayhooks import BasePipelineWrapper, get_last_user_message, log, streaming_generator
 
-from app.common import (
-    API_URL,
-    EMBED_MODEL_ID,
-    GENERATION_MODEL_ID,
-    get_document_store,
-    get_vllm_secret,
-)
+# __________ BASE CONFIGURATION __________ #
+VLLM_API_KEY = os.getenv("VLLM_API_KEY")
+API_URL = os.getenv("VLLM_API_URL", "https://orfeo-llm.areasciencepark.it/vllm/v1")
+
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant.orfeo-rag.svc.cluster.local:6333")
+
+# __________ MANUAL CONFIGURATION __________ #
+GENERATION_MODEL_ID = "Qwen/Qwen3.5-9B"
+EMBED_MODEL_ID = "Qwen/Qwen3-VL-Embedding-8B"
+EMBEDDING_DIM = 4096
+
+QDRANT_COLLECTION = "Test"
+
+TEMPLATE = [
+    ChatMessage.from_user(
+        """
+        You have to answer the following question based on the given context information only.
+        Context:
+        {% for document in documents %}
+            {{ document.content }}
+        {% endfor %}
+        Question: {{question}}
+        Answer:
+        """
+    )
+]
+
+if not VLLM_API_KEY:
+    raise RuntimeError("VLLM_API_KEY is not set.")
+
+def get_document_store() -> QdrantDocumentStore:
+    """
+    Returns a QdrantDocumentStore pointing at the shared, persistent, in-cluster Qdrant instance.
+    """
+    return QdrantDocumentStore(
+        url=QDRANT_URL,
+        index=QDRANT_COLLECTION,
+        embedding_dim=EMBEDDING_DIM,
+    )
+
+def get_vllm_secret() -> Secret:
+    return Secret.from_token(VLLM_API_KEY)
+
 
 def on_pipeline_end(result: dict) -> str:
     """
@@ -44,19 +83,6 @@ def on_pipeline_end(result: dict) -> str:
         sources_str += f"{idx}. {label}\n"
     return sources_str
 
-TEMPLATE = [
-    ChatMessage.from_user(
-        """
-        You have to answer the following question based on the given context information only.
-        Context:
-        {% for document in documents %}
-            {{ document.content }}
-        {% endfor %}
-        Question: {{question}}
-        Answer:
-        """
-    )
-]
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
@@ -100,9 +126,8 @@ class PipelineWrapper(BasePipelineWrapper):
         log.trace("Question: {}", question)
 
         if body.get("stream", False):
-            # Real token-by-token streaming: streaming_generator wires up
-            # llm's streaming_callback under the hood and yields chunks as
-            # the VLLMChatGenerator produces them.
+            # Real token-by-token streaming: streaming_generator wires up llm's streaming_callback 
+            # under the hood and yields chunks as the VLLMChatGenerator produces them.
             return streaming_generator(
                 pipeline=self.pipeline,
                 pipeline_run_args={

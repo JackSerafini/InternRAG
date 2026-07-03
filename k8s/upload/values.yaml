@@ -18,14 +18,14 @@ spec:
     spec:
       containers:
         - name: rag-upload
-          image: jackserafini/rag-upload:latest
+          image: jackserafini/rag-upload:test
 
           ports:
             - containerPort: 7860
           
           env:
             - name: INDEXING_SERVICE_URL
-              value: "http://rag-indexing.orfeo-rag.svc.cluster.local:8001"
+              value: "http://rag-indexing.orfeo-rag.svc.cluster.local:1416"
           
           resources:
             requests:
