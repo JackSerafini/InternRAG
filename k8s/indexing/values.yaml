@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: rag-indexing
-          image: jackserafini/rag-indexing:test
+          image: jackserafini/rag-indexing:v2-haystack
 
           ports:
             - containerPort: 1416

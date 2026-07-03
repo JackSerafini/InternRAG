@@ -3,10 +3,11 @@ FROM python:3.12-slim
 WORKDIR /srv
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=1200 -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1200 hayhooks vllm-haystack qdrant-haystack
 # --default-timeout=1200 in case it doesn't download packages fast enough
 
 COPY pipeline_wrappers/RAG-Test ./pipeline_wrappers/RAG-Test
+# COPY pipeline_wrappers/RAG-QWEN ./pipeline_wrappers/RAG-QWEN
 
 EXPOSE 1416
 
