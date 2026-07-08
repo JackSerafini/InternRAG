@@ -13,12 +13,12 @@ QDRANT_URL = "localhost:6333"
 DINO_COLLECTION = "SEMImages_dino"
 QWEN_COLLECTION = "SEMImages_qwen"
 DINO_EMBEDDING_DIM = 768
-QWEN_EMBEDDING_DIM = None
+QWEN_EMBEDDING_DIM = 4096
 
 CROPS_FOLDER = "subset_test_1000/crops"
 JSON_FOLDER = "subset_test_1000/json"
 DINO_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings"
-QWEN_EMBEDDINGS_FOLDER = None
+QWEN_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings_QWEN"
 
 SETTINGS_KEYS = [
     "AP_WD",
@@ -196,8 +196,8 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
 if __name__ == "__main__":
     print("--- Building DINO collection ---")
     build_collection(DINO_COLLECTION, DINO_EMBEDDINGS_FOLDER, DINO_EMBEDDING_DIM, JSON_FOLDER)
+    # print("Skipped -- Already built.")
 
     print("\n--- Building QWEN collection ---")
-    # Uncomment once QWEN embeddings exist and QWEN_EMBEDDING_DIM is set above:
-    # build_collection(QWEN_COLLECTION, QWEN_EMBEDDINGS_FOLDER, QWEN_EMBEDDING_DIM)
-    print("Skipped -- set QWEN_EMBEDDING_DIM and generate embeddings_qwen/ first.")
+    build_collection(QWEN_COLLECTION, QWEN_EMBEDDINGS_FOLDER, QWEN_EMBEDDING_DIM, JSON_FOLDER)
+    # print("Skipped -- Already built.")
