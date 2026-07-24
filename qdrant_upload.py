@@ -1,6 +1,11 @@
 import os
+import glob
 import re
+import io
 import json
+import base64
+from PIL import Image
+import numpy as np
 import pandas as pd
 import torch
 
@@ -8,6 +13,19 @@ from haystack import Document
 from haystack.document_stores.types import DuplicatePolicy
 
 from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
+
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+VLLM_API_KEY = os.getenv("VLLM_API_KEY")
+VLLM_BASE_URL = "https://orfeo-llm.areasciencepark.it/vllm/v1"
+
+client = OpenAI(base_url=VLLM_BASE_URL,api_key=VLLM_API_KEY)
+
+GEMMA_MODEL = "google/gemma-4-26B-A4B-it"
+DESCRIPTIONS_FILE = "subset_test_1000/image_descriptions.json"
 
 QDRANT_URL = "localhost:6333"
 DINO_COLLECTION = "SEMImages_dino"
@@ -20,9 +38,12 @@ JSON_FOLDER = "subset_test_1000/json"
 DINO_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings"
 QWEN_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings_QWEN"
 
+THUMBNAIL_SIZE = (224, 224)  # downsized preview for chat rendering, not a crop --
+                              # full field of view preserved, only resolution drops.
+                              # tune down to (128,128) if payload size becomes an issue.
+
 SETTINGS_KEYS = [
     "AP_WD",
-    "AP_ALIAS_WD",
     "AP_FREE_WD",
     "AP_BEAM_TIME",
     "AP_STAGE_LOW_Z",
@@ -124,7 +145,114 @@ def render_content(row):
     return " ".join(parts)
 
 
-def build_meta(row):
+def encode_image(path, size=None):
+    arr = np.load(path)
+    image = Image.fromarray(arr, mode="L")
+    if size is not None:
+        image = image.resize(size, Image.LANCZOS)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
+
+def generate_image_description(image_path):
+    """
+    Ask Gemma 4 to describe a SEM image.
+    """
+    image_url = encode_image(image_path)
+
+    response = client.chat.completions.create(
+        model=GEMMA_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert in scanning electron microscopy. "
+                    "Describe the image focusing on morphology, structure, "
+                    "particle shape, size, texture, and visible patterns. "
+                    "Do not invent information that is not visible."
+                )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this SEM image. "
+                            "Provide a concise scientific description."
+                        )
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url
+                        }
+                    }
+                ]
+            }
+        ],
+        temperature=0.2,
+    )
+
+    return response.choices[0].message.content
+
+
+def load_descriptions():
+    if os.path.exists(DESCRIPTIONS_FILE):
+        with open(DESCRIPTIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_descriptions(descriptions):
+    with open(DESCRIPTIONS_FILE, "w") as f:
+        json.dump(
+            descriptions,
+            f,
+            indent=2
+        )
+
+
+def get_crop_path(image_id):
+    pattern = os.path.join(
+        CROPS_FOLDER,
+        f"{image_id}_*.npy"
+    )
+
+    matches = glob.glob(pattern)
+
+    if len(matches) == 0:
+        raise FileNotFoundError(
+            f"No crop found for image ID {image_id}"
+        )
+
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple crops found for image ID {image_id}: {matches}"
+        )
+
+    return matches[0]
+
+
+def get_description(image_id):
+    descriptions = load_descriptions()
+
+    key = str(image_id)
+    if key in descriptions:
+        return descriptions[key]
+
+    crop_path = get_crop_path(image_id)
+    print(f"Generating description for image {image_id}")
+
+    description = generate_image_description(crop_path)
+    descriptions[key] = description
+    save_descriptions(descriptions)
+
+    return description
+
+
+def build_meta(row, include_thumbnail=False):
     """
     Build the metadata for filtering to append to the Document to upload to Qdrant.  
     Returns a dictionary of key: value.
@@ -138,10 +266,15 @@ def build_meta(row):
         value = row[key]
         if value is not None:
             meta[key] = float(value)
+
+    if include_thumbnail:
+        crop_path = get_crop_path(int(row["SEMImageID"]))
+        meta["thumb_b64"] = encode_image(crop_path, size=THUMBNAIL_SIZE)
+    
     return meta
 
 
-def build_documents(embeddings, json_folder):
+def build_documents(embeddings, json_folder, include_thumbnail=False):
     """
     Build the Haystack Document to upload to Qdrant.  
     Returns a list of Documents.
@@ -156,12 +289,16 @@ def build_documents(embeddings, json_folder):
             skipped.append(image_id)
             continue
 
+        description = get_description(image_id)
+        content = render_content(row)
+        content += "\n\nVisual description:\n" + description
+
         documents.append(
             Document(
                 id=str(image_id),
-                content=render_content(row),
+                content=content,
                 embedding=embeddings[image_id],
-                meta=build_meta(row),
+                meta=build_meta(row, include_thumbnail=include_thumbnail),
             )
         )
 
@@ -170,7 +307,7 @@ def build_documents(embeddings, json_folder):
     return documents
 
 
-def build_collection(collection_name, embeddings_folder, embedding_dim, json_folder):
+def build_collection(collection_name, embeddings_folder, embedding_dim, json_folder, include_thumbnail=False):
     if embedding_dim is None:
         raise ValueError(
             f"embedding_dim not set for collection '{collection_name}' -- "
@@ -182,11 +319,13 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
         embedding_dim=embedding_dim,
         recreate_index=True,
         payload_fields_to_index=PAYLOAD_FIELDS_TO_INDEX,
+        write_batch_size=20,
+        timeout=60,
         url=QDRANT_URL,
     )
 
     embeddings = load_embeddings(embeddings_folder)
-    documents = build_documents(embeddings, json_folder)
+    documents = build_documents(embeddings, json_folder, include_thumbnail=include_thumbnail)
     document_store.write_documents(documents, policy=DuplicatePolicy.OVERWRITE)
     print(f"Wrote {len(documents)} documents to '{collection_name}' (dim={embedding_dim}), "
           f"indexed on {len(PAYLOAD_FIELDS_TO_INDEX)} payload fields.")
@@ -195,9 +334,9 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
 
 if __name__ == "__main__":
     print("--- Building DINO collection ---")
-    build_collection(DINO_COLLECTION, DINO_EMBEDDINGS_FOLDER, DINO_EMBEDDING_DIM, JSON_FOLDER)
+    build_collection(DINO_COLLECTION, DINO_EMBEDDINGS_FOLDER, DINO_EMBEDDING_DIM, JSON_FOLDER, include_thumbnail=False)
     # print("Skipped -- Already built.")
 
     print("\n--- Building QWEN collection ---")
-    build_collection(QWEN_COLLECTION, QWEN_EMBEDDINGS_FOLDER, QWEN_EMBEDDING_DIM, JSON_FOLDER)
+    build_collection(QWEN_COLLECTION, QWEN_EMBEDDINGS_FOLDER, QWEN_EMBEDDING_DIM, JSON_FOLDER, include_thumbnail=True)
     # print("Skipped -- Already built.")
