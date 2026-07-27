@@ -16,3 +16,10 @@ spec:
             name: open-webui
             port:
               number: 80
+      - path: /rag-images
+        pathType: Prefix
+        backend:
+          service:
+            name: rag-retrieval # your retrieval Service name
+            port:
+              number: 1416

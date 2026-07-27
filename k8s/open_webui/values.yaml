@@ -42,6 +42,14 @@ sso:
     providerUrl: "http://keycloak-keycloakx-http.orfeo-rag.svc.cluster.local/realms/orfeo/.well-known/openid-configuration"
     providerName: "Keycloak"
 
+extraEnvVars:
+  - name: WEBUI_URL
+    value: "http://chat.local"
+  - name: OPENID_REDIRECT_URI
+    value: "http://chat.local/oauth/oidc/callback"
+  - name: ENABLE_OAUTH_PERSISTENT_CONFIG
+    value: "false"
+
 # openaiBaseApiUrl: "https://orfeo-llm.areasciencepark.it/vllm/v1"
 # openaiApiKeyExistingSecret: "vllm-api-key"
 # openaiApiKeyExistingSecretKey: "api-key"
