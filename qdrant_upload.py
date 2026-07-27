@@ -25,7 +25,7 @@ VLLM_BASE_URL = "https://orfeo-llm.areasciencepark.it/vllm/v1"
 client = OpenAI(base_url=VLLM_BASE_URL,api_key=VLLM_API_KEY)
 
 GEMMA_MODEL = "google/gemma-4-26B-A4B-it"
-DESCRIPTIONS_FILE = "subset_test_1000/image_descriptions.json"
+DESCRIPTIONS_FILE = "data/subset_test_1000/image_descriptions.json"
 
 QDRANT_URL = "localhost:6333"
 DINO_COLLECTION = "SEMImages_dino"
@@ -33,10 +33,10 @@ QWEN_COLLECTION = "SEMImages_qwen"
 DINO_EMBEDDING_DIM = 768
 QWEN_EMBEDDING_DIM = 4096
 
-CROPS_FOLDER = "subset_test_1000/crops"
-JSON_FOLDER = "subset_test_1000/json"
-DINO_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings"
-QWEN_EMBEDDINGS_FOLDER = "subset_test_1000/embeddings_QWEN"
+CROPS_FOLDER = "data/subset_test_1000/crops"
+JSON_FOLDER = "data/subset_test_1000/json"
+DINO_EMBEDDINGS_FOLDER = "data/subset_test_1000/embeddings"
+QWEN_EMBEDDINGS_FOLDER = "data/subset_test_1000/embeddings_QWEN"
 
 THUMBNAIL_SIZE = (224, 224)  # downsized preview for chat rendering, not a crop --
                               # full field of view preserved, only resolution drops.
