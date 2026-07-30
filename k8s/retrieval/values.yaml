@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: rag-retrieval
-          image: jackserafini/rag-retrieval:v4
+          image: jackserafini/rag-retrieval:v5
 
           ports:
             - containerPort: 1416

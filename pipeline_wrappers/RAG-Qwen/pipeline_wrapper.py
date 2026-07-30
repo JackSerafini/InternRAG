@@ -9,12 +9,14 @@ from haystack import Pipeline, component
 from haystack.utils import Secret
 from haystack.components.builders import AnswerBuilder, ChatPromptBuilder
 from haystack.dataclasses import ChatMessage
-from haystack_integrations.components.embedders.vllm import VLLMTextEmbedder
 from haystack_integrations.components.generators.vllm import VLLMChatGenerator
 from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 from haystack_integrations.components.retrievers.qdrant import QdrantEmbeddingRetriever
 
-from hayhooks import BasePipelineWrapper, get_last_user_message, log, streaming_generator
+from hayhooks import BasePipelineWrapper, log, streaming_generator
+
+from openai import OpenAI
+from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 # __________ BASE CONFIGURATION __________ #
 VLLM_API_KEY = os.getenv("VLLM_API_KEY")
@@ -70,6 +72,8 @@ TEMPLATE = [
         """
     )
 ]
+
+INSTRUCTION = "Represent the user's input."
 
 if not VLLM_API_KEY:
     raise RuntimeError("VLLM_API_KEY is not set.")
@@ -157,6 +161,45 @@ class QueryMetadataExtractor:
 '''
 
 
+@component
+class QueryEmbedder():
+    def __init__(self, model: str, api_base_url: str, api_key: str):
+        self.model = model
+        self.client = OpenAI(base_url=api_base_url, api_key=api_key)
+
+    @component.output_types(embedding=list[float])
+    def run(self, text: str = "", image_data_urls: list[str] | None = None):
+        if image_data_urls:
+            messages = [
+                {"role": "system", "content": [{"type": "text", "text": INSTRUCTION,}]},
+                {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": image_data_urls[0]}},
+                        {"type": "text", "text": ""},
+                ]},
+                {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": [{"type": "text", "text": INSTRUCTION,}]},
+                {"role": "user", "content": [{"type": "text", "text": text}]},
+                {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+            ]
+
+        response: CreateEmbeddingResponse = self.client.post(
+            "/embeddings",
+            cast_to=CreateEmbeddingResponse,
+            body={
+                "messages": messages,
+                "model": self.model,
+                "encoding_format": "float",
+                "continue_final_message": True,
+                "add_special_tokens": True,
+            },
+        )
+
+        return {"embedding": response.data[0].embedding}
+
+
 def render_image_gallery(documents) -> str:
     """
     Render the retrieved candidates as inline images so the researcher can
@@ -194,47 +237,50 @@ class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         document_store = get_document_store()
 
-        query_embedder = VLLMTextEmbedder(
-            model=EMBED_MODEL_ID,
-            api_key=get_vllm_secret(),
-            api_base_url=API_URL,
-        )
-        retriever = QdrantEmbeddingRetriever(document_store=document_store, top_k=5)
-        prompt_builder = ChatPromptBuilder(
-            template=TEMPLATE, required_variables={"question", "documents"}
-        )
-        # metadata_extractor = QueryMetadataExtractor() # NOTE: this is just a try
-        llm = VLLMChatGenerator(
-            model=GENERATION_MODEL_ID,
-            api_key=get_vllm_secret(),
-            api_base_url=API_URL,
-        )
-        answer_builder = AnswerBuilder()
-
         pipeline = Pipeline()
-        pipeline.add_component("query_embedder", query_embedder)
-        pipeline.add_component("retriever", retriever)
+        pipeline.add_component("query_embedder", QueryEmbedder(model=EMBED_MODEL_ID, api_base_url=API_URL, api_key=VLLM_API_KEY))
+        pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=5))
         pipeline.connect("query_embedder.embedding", "retriever")
 
-        ''' NOTE: this is just a try
-        pipeline.add_component("metadata_extractor", metadata_extractor)
-        pipeline.connect("metadata_extractor.filters", "retriever.filters")
-        '''
+        # pipeline.add_component("metadata_extractor", QueryMetadataExtractor()) # NOTE: this is just a try
+        # pipeline.connect("metadata_extractor.filters", "retriever.filters") # NOTE: this is just a try
 
-        pipeline.add_component("prompt_builder", prompt_builder)
+        pipeline.add_component("prompt_builder", ChatPromptBuilder(template=TEMPLATE, required_variables={"question", "documents"}))
         pipeline.connect("retriever", "prompt_builder")
 
-        pipeline.add_component("llm", llm)
+        pipeline.add_component("llm", VLLMChatGenerator(model=GENERATION_MODEL_ID, api_key=get_vllm_secret(), api_base_url=API_URL))
         pipeline.connect("prompt_builder", "llm")
 
-        pipeline.add_component("answer_builder", answer_builder)
+        pipeline.add_component("answer_builder", AnswerBuilder())
         pipeline.connect("llm", "answer_builder")
         pipeline.connect("retriever", "answer_builder")
 
         self.pipeline = pipeline
 
+    def extract_query(self, messages: list[dict]):
+        msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+        if msg is None:
+            return "", []
+
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return content, []
+
+        text, images = "", []
+
+        for part in content:
+            if part.get("type") == "text":
+                text += part.get("text", "")
+
+            elif part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url")
+                if url:
+                    images.append(url)
+
+        return text, images
+
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
-        question = get_last_user_message(messages)
+        question, images = self.extract_query(messages)
         log.trace("Question: {}", question)
         # metadata_fields = [
         #     "AP_WD",
@@ -258,7 +304,7 @@ class PipelineWrapper(BasePipelineWrapper):
                 pipeline=self.pipeline,
                 pipeline_run_args={
                     # "metadata_extractor": {"query": question, "metadata_fields": metadata_fields}, # NOTE
-                    "query_embedder": {"text": question},
+                    "query_embedder": {"text": question, "image_data_urls": images},
                     "prompt_builder": {"question": question},
                     "answer_builder": {"query": question},
                 },
@@ -269,7 +315,7 @@ class PipelineWrapper(BasePipelineWrapper):
         response = self.pipeline.run(
             {
                 # "metadata_extractor": {"query": question, "metadata_fields": metadata_fields}, # NOTE
-                "query_embedder": {"text": question},
+                "query_embedder": {"text": question, "image_data_urls": images},
                 "prompt_builder": {"question": question},
                 "answer_builder": {"query": question},
             }
