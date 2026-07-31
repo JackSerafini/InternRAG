@@ -15,49 +15,13 @@ from haystack.document_stores.types import DuplicatePolicy
 from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 
 from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
+from sem_rag.config.settings import *
 
-VLLM_API_KEY = os.getenv("VLLM_API_KEY")
-VLLM_BASE_URL = "https://orfeo-llm.areasciencepark.it/vllm/v1"
-
-client = OpenAI(base_url=VLLM_BASE_URL,api_key=VLLM_API_KEY)
-
-GEMMA_MODEL = "google/gemma-4-26B-A4B-it"
-DESCRIPTIONS_FILE = "data/subset_test_1000/image_descriptions.json"
-
-QDRANT_URL = "localhost:6333"
-DINO_COLLECTION = "SEMImages_dino"
-QWEN_COLLECTION = "SEMImages_qwen"
-DINO_EMBEDDING_DIM = 768
-QWEN_EMBEDDING_DIM = 4096
-
-CROPS_FOLDER = "data/subset_test_1000/crops"
-JSON_FOLDER = "data/subset_test_1000/json"
-DINO_EMBEDDINGS_FOLDER = "data/subset_test_1000/embeddings"
-QWEN_EMBEDDINGS_FOLDER = "data/subset_test_1000/embeddings_QWEN"
-
-THUMBNAIL_SIZE = (224, 224)  # downsized preview for chat rendering, not a crop --
-                              # full field of view preserved, only resolution drops.
-                              # tune down to (128,128) if payload size becomes an issue.
-
-SETTINGS_KEYS = [
-    "AP_WD",
-    "AP_FREE_WD",
-    "AP_BEAM_TIME",
-    "AP_STAGE_LOW_Z",
-    "AP_STAGE_CENTRE_X",
-    "AP_C3",
-    "AP_EHT_CAL_30KV",
-    "AP_EHT_CAL_10KV",
-    "AP_EHT_CAL_100",
-    "AP_EHT_CAL_24KV",
-    "AP_MINMAG",
-]
+client = OpenAI(base_url=VLLM.API_URL, api_key=VLLM.API_KEY)
 
 PAYLOAD_FIELDS_TO_INDEX = [
-    {"field_name": key, "field_schema": "float"} for key in SETTINGS_KEYS
+    {"field_name": key, "field_schema": "float"} for key in TestSem.SETTINGS_KEYS
 ] + [
     {"field_name": "SEMImageID", "field_schema": "integer"},
 ]
@@ -101,7 +65,7 @@ def load_all_metadata(folder_path):
             "ImageAVGHashName": data["ImageAVGHashName"],
         }
 
-        for key in SETTINGS_KEYS:
+        for key in TestSem.SETTINGS_KEYS:
             value, unit = parse_value(data.get(key))
             row[key] = value # numeric column, e.g. AP_WD = 3.198
             row[f"{key}_unit"] = unit # e.g. AP_WD_unit = "mm"
@@ -163,7 +127,7 @@ def generate_image_description(image_path):
     image_url = encode_image(image_path)
 
     response = client.chat.completions.create(
-        model=GEMMA_MODEL,
+        model=VLLM.GEMMA_MODEL,
         messages=[
             {
                 "role": "system",
@@ -200,13 +164,13 @@ def generate_image_description(image_path):
 
 
 def load_descriptions():
-    if os.path.exists(DESCRIPTIONS_FILE):
-        with open(DESCRIPTIONS_FILE, "r") as f:
+    if os.path.exists(TestSem.DESCRIPTIONS):
+        with open(TestSem.DESCRIPTIONS, "r") as f:
             return json.load(f)
     return {}
 
 def save_descriptions(descriptions):
-    with open(DESCRIPTIONS_FILE, "w") as f:
+    with open(TestSem.DESCRIPTIONS, "w") as f:
         json.dump(
             descriptions,
             f,
@@ -216,7 +180,7 @@ def save_descriptions(descriptions):
 
 def get_crop_path(image_id):
     pattern = os.path.join(
-        CROPS_FOLDER,
+        TestSem.CROPS,
         f"{image_id}_*.npy"
     )
 
@@ -262,14 +226,14 @@ def build_meta(row, include_thumbnail=False):
         "ImageOriginalName": row["ImageOriginalName"],
         "ImageHashName": row["ImageHashName"],
     }
-    for key in SETTINGS_KEYS:
+    for key in TestSem.SETTINGS_KEYS:
         value = row[key]
         if value is not None:
             meta[key] = float(value)
 
     if include_thumbnail:
         crop_path = get_crop_path(int(row["SEMImageID"]))
-        meta["thumb_b64"] = encode_image(crop_path, size=THUMBNAIL_SIZE)
+        meta["thumb_b64"] = encode_image(crop_path, size=TestSem.THUMBNAIL_SIZE)
     
     return meta
 
@@ -321,7 +285,7 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
         payload_fields_to_index=PAYLOAD_FIELDS_TO_INDEX,
         write_batch_size=20,
         timeout=60,
-        url=QDRANT_URL,
+        url=Qdrant.URL,
     )
 
     embeddings = load_embeddings(embeddings_folder)
@@ -334,9 +298,9 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
 
 if __name__ == "__main__":
     print("--- Building DINO collection ---")
-    build_collection(DINO_COLLECTION, DINO_EMBEDDINGS_FOLDER, DINO_EMBEDDING_DIM, JSON_FOLDER, include_thumbnail=False)
+    build_collection(Qdrant.COLLECTION_DINO, TestSem.EMBEDDINGS_DINO, Qdrant.EMBEDDING_DIM_DINO, TestSem.JSON, include_thumbnail=False)
     # print("Skipped -- Already built.")
 
     print("\n--- Building QWEN collection ---")
-    build_collection(QWEN_COLLECTION, QWEN_EMBEDDINGS_FOLDER, QWEN_EMBEDDING_DIM, JSON_FOLDER, include_thumbnail=True)
+    build_collection(Qdrant.COLLECTION_QWEN, TestSem.EMBEDDINGS_QWEN, Qdrant.EMBEDDING_DIM_QWEN, TestSem.JSON, include_thumbnail=True)
     # print("Skipped -- Already built.")
