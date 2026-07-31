@@ -2,8 +2,9 @@
 Hayhooks PipelineWrapper for the QWEN RAG retrieval pipeline.
 """
 import os
+import json
 from collections.abc import Generator
-from typing import Union
+from typing import Union, Dict, List
 
 from haystack import Pipeline, component
 from haystack.utils import Secret
@@ -75,6 +76,38 @@ TEMPLATE = [
 
 INSTRUCTION = "Represent the user's input."
 
+METADATA_FIELDS = [
+    "AP_WD",
+    "AP_FREE_WD",
+    "AP_BEAM_TIME",
+    "AP_STAGE_LOW_Z",
+    "AP_STAGE_CENTRE_X",
+    "AP_C3",
+    "AP_EHT_CAL_30KV",
+    "AP_EHT_CAL_10KV",
+    "AP_EHT_CAL_100",
+    "AP_EHT_CAL_24KV",
+    "AP_MINMAG",
+]
+
+# Right now, all fields are taken relative to the value passed, ±10%
+# TODO: tune this -> some might need an absolute range (e.g., ±10% of a very small value will practically be exact)
+FIELD_CONFIG = {
+    "AP_WD":             {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_FREE_WD":        {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"}, 
+    "AP_BEAM_TIME":      {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_STAGE_LOW_Z":    {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_STAGE_CENTRE_X": {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_C3":             {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_EHT_CAL_30KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_EHT_CAL_10KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_EHT_CAL_100":    {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_EHT_CAL_24KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+    "AP_MINMAG":         {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
+}
+
+VALID_OPERATORS = {">=", "<=", "~", "between"}
+
 if not VLLM_API_KEY:
     raise RuntimeError("VLLM_API_KEY is not set.")
 
@@ -91,74 +124,136 @@ def get_document_store() -> QdrantDocumentStore:
 def get_vllm_secret() -> Secret:
     return Secret.from_token(VLLM_API_KEY)
 
-''' NOTE: this is just a try to implement a metadata extractor from a query
-@component()
-class QueryMetadataExtractor:
+
+@component
+class QueryMetadataExtractor():
     def __init__(self):
         template = [
+            ChatMessage.from_system(
+                """
+                You are part of an information system that processes users queries.
+                Given a user query you extract information from it that matches a given list of metadata fields.
+                The information to be extracted from the query must match the semantics associated with the given metadata fields.
+                The information that you extracted from the query will then be used as filters to narrow down the search space
+                when querying an index.
+
+                For each field you extract, return an object with "operator" and "value":
+                - ">="      -> greater than or equal to value
+                - "<="      -> less than or equal to value
+                - "~"       -> approximately equal to value (use this when the user says "around", "about", "roughly",
+                            "approximately", or gives an exact-sounding value with no qualifier, e.g. "=", "exactly")
+                - "between" -> use this when the user gives a range with two bounds; "value" must then be a list of
+                            two numbers [low, high] instead of a single number
+
+                The extracted information in 'Extracted metadata' must be returned as a valid JSON structure.
+                Only include a key in the output if the query explicitly provides or clearly implies its value.
+                If no metadata fields are present in the query, return an empty JSON object: {}
+                ###
+                Example 1:
+                Query: "What is the resolution of this microscope image?"
+                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
+                Extracted metadata fields: {}
+                ###
+                Example 2:
+                Query: "Show me images with a working distance around 8mm"
+                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
+                Extracted metadata fields: {"AP_WD": {"operator": "~", "value": 8}}
+                ###
+                Example 3:
+                Query: "Find images with beam time greater than 30 seconds"
+                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
+                Extracted metadata fields: {"AP_BEAM_TIME": {"operator": ">=", "value": 30}}
+                ###
+                Example 4:
+                Query: "Show me images with working distance below 5mm"
+                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
+                Extracted metadata fields: {"AP_WD": {"operator": "<=", "value": 5}}
+                ###
+                Example 5:
+                Query: "Show me images with beam time between 20 and 40 seconds"
+                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
+                Extracted metadata fields: {"AP_BEAM_TIME": {"operator": "between", "value": [20, 40]}}
+                """
+            ),
             ChatMessage.from_user(
-            """
-            You are part of an information system that processes users queries.
-            Given a user query you extract information from it that matches a given list of metadata fields.
-            The information to be extracted from the query must match the semantics associated with the given metadata fields.
-            The information that you extracted from the query will then be used as filters to narrow down the search space
-            when querying an index.
-            Just include the value of the extracted metadata without including the name of the metadata field.
-            The extracted information in 'Extracted metadata' must be returned as a valid JSON structure.
-            Only include a key in the output if the query explicitly provides or clearly implies its value.
-            If no metadata fields are present in the query, return an empty JSON object: {}
-            ###
-            Example 1:
-            Query: "What was the revenue of Nvidia in 2022?"
-            Metadata fields: {"company", "year"}
-            Extracted metadata fields: {"company": "nvidia", "year": 2022}
-            ###
-            Example 2:
-            Query: "What were the most influential publications in 2023 regarding Alzheimer's disease?"
-            Metadata fields: {"disease", "year"}
-            Extracted metadata fields: {"disease": "Alzheimer", "year": 2023}
-            ###
-            Example 3:
-            Query: "What is the resolution of this microscope image?"
-            Metadata fields: {"AP_WD", "AP_BEAM_TIME"}
-            Extracted metadata fields: {}
-            """
-            )
+                """
+                Query: {{ query }}
+                Metadata fields: {{ metadata_fields }}
+                Extracted metadata fields:
+                """
+            ),
         ]
 
-        prompt_builder = ChatPromptBuilder(template=template)
-        llm = VLLMChatGenerator(
-            model=GENERATION_MODEL_ID,
-            api_key=get_vllm_secret(),
-            api_base_url=API_URL,
-            generation_kwargs={"response_format": {"type": "json_object"}},
-        )
-
         self.pipeline = Pipeline()
-        self.pipeline.add_component(name="builder", instance=prompt_builder)
-        self.pipeline.add_component(name="llm", instance=llm)
+        self.pipeline.add_component("builder", ChatPromptBuilder(template=template, required_variables={"query", "metadata_fields"}))
+        self.pipeline.add_component("llm", VLLMChatGenerator(model=GENERATION_MODEL_ID, api_key=get_vllm_secret(), api_base_url=API_URL, generation_kwargs={"response_format": {"type": "json_object"}}))
         self.pipeline.connect("builder", "llm")
 
-    @component.output_types(filters=Dict[str, Any])
+    def build_condition(self, field: str, extracted: dict, config: dict):
+        operator = extracted.get("operator")
+        value = extracted.get("value")
+
+        if operator not in VALID_OPERATORS:
+            return None  # guard against hallucinated operator strings
+
+        if operator == "between":
+            if not (isinstance(value, list) and len(value) == 2):
+                return None  # malformed range, drop rather than guess
+            try:
+                low, high = float(value[0]), float(value[1])
+            except (TypeError, ValueError):
+                return None
+            if low > high:
+                low, high = high, low  # tolerate reversed bounds from the LLM
+            return {
+                "operator": "AND",
+                "conditions": [
+                    {"field": f"meta.{field}", "operator": ">=", "value": low},
+                    {"field": f"meta.{field}", "operator": "<=", "value": high},
+                ],
+            }
+        
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None  # LLM gave something non-numeric for a numeric field, drop it
+
+        if operator == "~":
+            tol = config.get("tolerance", 0.1)
+            # If it not "relative", it will be absolute -> take as delta the absolute tolerance set
+            delta = abs(value) * tol if config.get("tolerance_type", "relative") == "relative" else tol
+            return {
+                "operator": "AND",
+                "conditions": [
+                    {"field": f"meta.{field}", "operator": ">=", "value": value - delta},
+                    {"field": f"meta.{field}", "operator": "<=", "value": value + delta},
+                ],
+            }
+
+        # ">=", "<=" map directly onto Qdrant's own operator strings
+        return {"field": f"meta.{field}", "operator": operator, "value": value}
+
+    @component.output_types(filters=Dict[str, str])
     def run(self, query: str, metadata_fields: List[str]):
         result = self.pipeline.run({'builder': {'query': query, 'metadata_fields': metadata_fields}})
         try:
-            metadata = json.loads(result['llm']['replies'][0].text)
+            metadata = json.loads(result['llm']['replies'][0].text) # key/value pairs the LLM decided to extract
 
-            # this can be done with specific data structures and in a more sophisticated way
-            filters = [
-                {"field": f"meta.{key}", "operator": "==", "value": value}
-                for key, value in metadata.items()
-                if key in metadata_fields  # guard against hallucinated field names
-            ]
+            conditions = []
+            for key, extracted in metadata.items():
+                if key not in metadata_fields:
+                    continue  # guard against hallucinated field names
+                config = FIELD_CONFIG.get(key, {"type": "range"})
+                cond = self.build_condition(key, extracted, config)
+                if cond is not None:
+                    conditions.append(cond)
 
-            if not filters:
-                return {"filters": None}  # explicit: no filtering
+            if not conditions:
+                return {"filters": None}
 
-            return {"filters": {"operator": "AND", "conditions": filters}}
-        except:
+            return {"filters": {"operator": "AND", "conditions": conditions}}
+        except Exception:
             return {"filters": None}
-'''
 
 
 @component
@@ -242,8 +337,8 @@ class PipelineWrapper(BasePipelineWrapper):
         pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=5))
         pipeline.connect("query_embedder.embedding", "retriever")
 
-        # pipeline.add_component("metadata_extractor", QueryMetadataExtractor()) # NOTE: this is just a try
-        # pipeline.connect("metadata_extractor.filters", "retriever.filters") # NOTE: this is just a try
+        pipeline.add_component("metadata_extractor", QueryMetadataExtractor()) # TODO
+        pipeline.connect("metadata_extractor.filters", "retriever.filters") # TODO
 
         pipeline.add_component("prompt_builder", ChatPromptBuilder(template=TEMPLATE, required_variables={"question", "documents"}))
         pipeline.connect("retriever", "prompt_builder")
@@ -282,19 +377,6 @@ class PipelineWrapper(BasePipelineWrapper):
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
         question, images = self.extract_query(messages)
         log.trace("Question: {}", question)
-        # metadata_fields = [
-        #     "AP_WD",
-        #     "AP_FREE_WD",
-        #     "AP_BEAM_TIME",
-        #     "AP_STAGE_LOW_Z",
-        #     "AP_STAGE_CENTRE_X",
-        #     "AP_C3",
-        #     "AP_EHT_CAL_30KV",
-        #     "AP_EHT_CAL_10KV",
-        #     "AP_EHT_CAL_100",
-        #     "AP_EHT_CAL_24KV",
-        #     "AP_MINMAG",
-        # ]
 
         if body.get("stream", False):
             # Real token-by-token streaming: streaming_generator wires up
@@ -303,7 +385,7 @@ class PipelineWrapper(BasePipelineWrapper):
             return streaming_generator(
                 pipeline=self.pipeline,
                 pipeline_run_args={
-                    # "metadata_extractor": {"query": question, "metadata_fields": metadata_fields}, # NOTE
+                    "metadata_extractor": {"query": question, "metadata_fields": METADATA_FIELDS}, # NOTE
                     "query_embedder": {"text": question, "image_data_urls": images},
                     "prompt_builder": {"question": question},
                     "answer_builder": {"query": question},
@@ -314,7 +396,7 @@ class PipelineWrapper(BasePipelineWrapper):
         # Non-streaming path: run synchronously and return the final text.
         response = self.pipeline.run(
             {
-                # "metadata_extractor": {"query": question, "metadata_fields": metadata_fields}, # NOTE
+                "metadata_extractor": {"query": question, "metadata_fields": METADATA_FIELDS}, # NOTE
                 "query_embedder": {"text": question, "image_data_urls": images},
                 "prompt_builder": {"question": question},
                 "answer_builder": {"query": question},
