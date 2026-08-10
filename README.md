@@ -95,7 +95,7 @@ source ~/.venv-vllm-metal/bin/activate
 pip install -r requirements.txt
 ```
 
-For Apple Silicon devices, refer to the official vLLM Metal repository for supported models and installation details (https://github.com/vllm-project/vllm-metal).
+For Apple Silicon devices, refer to the official vLLM Metal repository for supported models and installation details: https://github.com/vllm-project/vllm-metal.
 
 # Docker
 
