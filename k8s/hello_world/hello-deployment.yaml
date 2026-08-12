@@ -30,3 +30,12 @@ spec:
           limits:
             cpu: "200m"
             memory: "256Mi"
+
+        volumeMounts:
+        - name: hello-storage
+          mountPath: /mnt/test
+
+      volumes:
+      - name: hello-storage
+        persistentVolumeClaim:
+          claimName: hello-storage

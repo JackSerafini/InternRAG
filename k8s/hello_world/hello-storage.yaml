@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hello-storage
+  namespace: orfeo-rag
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rbd-nvme-replica
+  resources:
+    requests:
+      storage: 1Gi
