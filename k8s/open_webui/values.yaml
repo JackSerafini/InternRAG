@@ -7,7 +7,17 @@ pipelines:
 websocket:
   enabled: false
 
-# TODO: handle persistence better
+persistence:
+  enabled: true
+
+  # FIRST DEPLOYMENT
+  # size: 5Gi
+  # storageClass: rbd-nvme-replica
+  # annotations:
+  #   helm.sh/resource-policy: keep
+
+  # FROM THE SECOND DEPLOYMENT
+  existingClaim: open-webui
 
 resources:
   requests:
@@ -27,9 +37,11 @@ copyAppData:
       memory: 256Mi
 
 hostAliases:
-  - ip: "10.128.18.132"
+  - ip: "10.128.8.65"
+  # - ip: "10.128.18.132"
     hostnames:
-      - "auth.local"
+      - "auth-rag.dev.rd.areasciencepark.it"
+      # - "auth.local"
 
 sso:
   enabled: true
@@ -44,9 +56,9 @@ sso:
 
 extraEnvVars:
   - name: WEBUI_URL
-    value: "http://chat.local"
+    value: "http://llm-rag.dev.rd.areasciencepark.it"
   - name: OPENID_REDIRECT_URI
-    value: "http://chat.local/oauth/oidc/callback"
+    value: "http://llm-rag.dev.rd.areasciencepark.it/oauth/oidc/callback"
   - name: ENABLE_OAUTH_PERSISTENT_CONFIG
     value: "false"
 
