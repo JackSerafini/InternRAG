@@ -21,6 +21,22 @@ class VLLM:
     EMBEDDING_MODEL = "Qwen/Qwen3-VL-Embedding-8B"
 
 
+class SEMDataset:
+    CROPS = DATA_DIR / "SEM/crops"
+    JSON = DATA_DIR / "SEM/json"
+
+    EMBEDDINGS_QWEN = DATA_DIR / "SEM/embeddings_QWEN"
+
+    CATEGORICAL_SETTINGS = DATA_DIR / "SEM/SEM_RAG_categorical_fields_dictionary.csv"
+    NUMERICAL_SETTINGS = DATA_DIR / "SEM/SEM_RAG_numeric_fields_dictionary.csv"
+    CATEGORIES = DATA_DIR / "SEM/filtered_categories.csv"
+    
+    DESCRIPTIONS = DATA_DIR / "SEM/image_descriptions.json"
+
+    THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop -> full field of view preserved, only resolution drops
+    # tune down to (128,128) if payload size becomes an issue
+
+
 class TestSem:
     CROPS = DATA_DIR / "subset_test_1000/crops"
     JSON = DATA_DIR / "subset_test_1000/json"
@@ -51,8 +67,10 @@ class TestSem:
 class Qdrant:
     URL = "http://localhost:6333"
 
-    COLLECTION_QWEN = "SEMImages_qwen"
-    COLLECTION_DINO = "SEMImages_dino"
+    COLLECTION_QWEN = "SEM_qwen"
+    OLD_COLLECTION_QWEN = "Test_OLDSEM_qwen"
+    # COLLECTION_DINO = "SEMImages_dino"
+    OLD_COLLECTION_DINO = "Test_OLDSEM_dino"
     COLLECTION_TEST = "Test"
 
     EMBEDDING_DIM_QWEN = 4096
