@@ -144,6 +144,8 @@ To uninstall it:
 
 ```bash
 helm uninstall qdrant
+kubectl delete pvc -l app.kubernetes.io/instance=qdrant
+# kubectl delete pvc qdrant-storage-qdrant-0 -n orfeo-rag # to delete a specific one
 ```
 
 The Qdrant service is accessed internally by the InternRAG services through `qdrant.orfeo-rag.svc.cluster.local:6333`. This address is configured through `rag-config`.
@@ -201,6 +203,7 @@ To uninstall it:
 
 ```bash
 helm uninstall open-webui
+kubectl delete pvc -l app.kubernetes.io/instance=open-webui
 ```
 
 ### Ingress
