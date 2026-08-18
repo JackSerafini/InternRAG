@@ -1,13 +1,12 @@
 import io
 import base64
-from typing import Tuple
 
 import numpy as np
 from PIL import Image
 
 def encode_image(
         path: str, 
-        size: Tuple[int, int] | None = None
+        size: tuple[int, int] | None = None
 ) -> str:
     """
     Encode a NumPy image stored in a `.npy` file as a base64 PNG data URL.
