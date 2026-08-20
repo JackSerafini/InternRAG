@@ -7,7 +7,7 @@ from hayhooks import create_app
 from qdrant_client import QdrantClient, models
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant.orfeo-rag.svc.cluster.local:6333")
-QDRANT_COLLECTION = "SEMImages_qwen"
+QDRANT_COLLECTION = "SEM_qwen"
 
 # This is what hayhooks run / your uvicorn entrypoint serves --
 # it still auto-deploys pipelines from HAYHOOKS_PIPELINES_DIR at startup.

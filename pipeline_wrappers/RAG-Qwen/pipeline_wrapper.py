@@ -4,7 +4,7 @@ Hayhooks PipelineWrapper for the QWEN RAG retrieval pipeline.
 import os
 import json
 from collections.abc import Generator
-from typing import Union, Dict, List
+from typing import Union
 
 from haystack import Pipeline, component
 from haystack.utils import Secret
@@ -25,32 +25,513 @@ API_URL = os.getenv("VLLM_API_URL", "https://orfeo-llm.areasciencepark.it/vllm/v
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant.orfeo-rag.svc.cluster.local:6333")
 
-THUMBNAIL_BASE_URL = os.getenv("THUMBNAIL_BASE_URL", "https://chat.local/rag-images")
+THUMBNAIL_BASE_URL = os.getenv("THUMBNAIL_BASE_URL", "https://llm-rag.dev.rd.areasciencepark.it/rag-images")
 
 # __________ MANUAL CONFIGURATION __________ #
 GENERATION_MODEL_ID = "google/gemma-4-26B-A4B-it"
 EMBED_MODEL_ID = "Qwen/Qwen3-VL-Embedding-8B"
 EMBEDDING_DIM = 4096
 
-QDRANT_COLLECTION = "SEMImages_qwen"
+QDRANT_COLLECTION = "SEM_qwen"
+
+INSTRUCTION = "Represent the user's input."
+
+
+if not VLLM_API_KEY:
+    raise RuntimeError("VLLM_API_KEY is not set.")
+
+
+# __________ METADATA SCHEMA __________
+# This is the single source of truth for query metadata extraction.
+# 
+# The ingestion pipeline stores these canonical field names in Qdrant.
+# The LLM receives:
+#   - field descriptions
+#   - alternative/dictionary terms
+#   - units for numeric fields
+#   - allowed values and their descriptions for categorical fields
+#
+# Keeping this schema here means the pipeline_wrapper.py is self-contained
+# and does not need the original CSV files at runtime.
+# ============================================================================
+
+# Right now, all fields are taken relative to the value passed, ±10%
+# TODO: tune this -> some might need an absolute range (e.g., ±10% of a very small value will practically be exact)
+METADATA_SCHEMA = {
+    # __________ Numeric fields __________
+    "pixel_size_nm": {
+        "type": "numeric",
+        "description": (
+            "Physical spatial sampling represented by one image pixel. "
+            "It expresses the real-space scale of the SEM image and allows "
+            "images acquired at different spatial scales to be compared."
+        ),
+        "dictionary_terms": [
+            "pixel size",
+            "image pixel size",
+            "pixel dimension",
+            "nm per pixel",
+            "nm/pixel",
+            "nanometers per pixel",
+            "nanometres per pixel",
+            "um per pixel",
+            "µm per pixel",
+            "micrometers per pixel",
+            "micrometres per pixel",
+            "spatial sampling",
+            "pixel sampling",
+            "sampling resolution",
+        ],
+        "unit": "nm/pixel",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "magnification_x": {
+        "type": "numeric",
+        "description": (
+            "Nominal SEM magnification used when the image was acquired."
+        ),
+        "dictionary_terms": [
+            "magnification",
+            "mag",
+            "magnified",
+            "magnification factor",
+            "times magnification",
+            "x magnification",
+            "kx",
+            "KX",
+            "zoom level",
+        ],
+        "unit": "x",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "accelerating_voltage_kv": {
+        "type": "numeric",
+        "description": (
+            "Electron beam accelerating voltage, commonly reported as EHT. "
+            "It influences electron penetration, interaction volume, "
+            "surface sensitivity, charging behaviour and signal generation."
+        ),
+        "dictionary_terms": [
+            "accelerating voltage",
+            "acceleration voltage",
+            "EHT",
+            "beam voltage",
+            "electron beam voltage",
+            "electron voltage",
+            "high tension",
+            "high voltage",
+            "operating voltage",
+            "kV",
+            "kilovolts",
+            "kilovolt",
+        ],
+        "unit": "kV",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "working_distance_mm": {
+        "type": "numeric",
+        "description": (
+            "SEM working distance associated with the specimen-to-objective "
+            "imaging geometry. It influences imaging conditions such as depth "
+            "of field, resolution and detector geometry."
+        ),
+        "dictionary_terms": [
+            "working distance",
+            "WD",
+            "work distance",
+            "working dist",
+            "working-distance",
+            "focus distance",
+            "sample distance",
+            "specimen distance",
+        ],
+        "unit": "mm",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "brightness_percent": {
+        "type": "numeric",
+        "description": (
+            "Instrument brightness setting applied during acquisition. "
+            "It controls the displayed or saved signal intensity level."
+        ),
+        "dictionary_terms": [
+            "brightness",
+            "brightness level",
+            "image brightness",
+            "brightness setting",
+            "brightness percentage",
+            "bright",
+            "intensity level",
+        ],
+        "unit": "%",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "contrast_percent": {
+        "type": "numeric",
+        "description": (
+            "Instrument contrast setting applied during acquisition. "
+            "It controls the separation and dynamic range of intensities "
+            "represented in the SEM image."
+        ),
+        "dictionary_terms": [
+            "contrast",
+            "contrast level",
+            "image contrast",
+            "contrast setting",
+            "contrast percentage",
+            "dynamic range",
+            "intensity contrast",
+        ],
+        "unit": "%",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "scan_speed_setting": {
+        "type": "numeric",
+        "description": (
+            "Instrument-specific scan speed setting controlling how rapidly "
+            "the electron beam scans the image. It is an ordinal acquisition "
+            "setting rather than a physical time unless separately calibrated."
+        ),
+        "dictionary_terms": [
+            "scan speed",
+            "scan rate",
+            "scanrate",
+            "scanning speed",
+            "scanning rate",
+            "scan speed setting",
+            "scan setting",
+            "acquisition speed",
+            "raster speed",
+        ],
+        "unit": "setting",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "frame_average_count": {
+        "type": "numeric",
+        "description": (
+            "Number of image frames averaged together during acquisition "
+            "to reduce random noise and improve signal-to-noise ratio."
+        ),
+        "dictionary_terms": [
+            "frame averaging",
+            "frame average",
+            "frame average count",
+            "frame averaging count",
+            "frames averaged",
+            "number of frames averaged",
+            "frames to average",
+            "average frames",
+            "frame count",
+        ],
+        "unit": "count",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    "line_average_count": {
+        "type": "numeric",
+        "description": (
+            "Number of repeated scan lines averaged during acquisition "
+            "to reduce noise and improve signal stability."
+        ),
+        "dictionary_terms": [
+            "line averaging",
+            "line average",
+            "line average count",
+            "line averaging count",
+            "lines averaged",
+            "number of lines averaged",
+            "lines to average",
+            "average lines",
+        ],
+        "unit": "count",
+        "filter": {
+            "type": "range",
+            "tolerance": 0.10,
+            "tolerance_type": "relative",
+        },
+    },
+
+    # __________ Categorical fields __________
+    "category": {
+        "type": "categorical",
+        "description": (
+            "Human-assigned SEM morphology category from the annotated "
+            "dataset described by Aversa et al. The categories were defined "
+            "mainly from the dominant shape, structure and dimensionality "
+            "of the imaged object."
+        ),
+        "values": {
+            "Porous_Sponge": {
+                "description": (
+                    "SEM images assigned to the porous sponge category, "
+                    "characterized by a porous or sponge-like morphology."
+                ),
+                "dictionary_terms": [
+                    "porous sponge",
+                    "porous sponges",
+                    "sponge-like",
+                    "sponge like",
+                ],
+            },
+            "Patterned_surface": {
+                "description": (
+                    "SEM images of surfaces containing organized, repeated "
+                    "or lithographically defined patterns or structures."
+                ),
+                "dictionary_terms": [
+                    "patterned surface",
+                    "patterned surfaces",
+                    "surface pattern",
+                    "surface patterns",
+                    "patterned",
+                ],
+            },
+            "Particles": {
+                "description": (
+                    "Zero-dimensional particle-like objects that may be "
+                    "individually dispersed or grouped into clustered structures."
+                ),
+                "dictionary_terms": [
+                    "particle",
+                    "particles",
+                    "nanoparticle",
+                    "nanoparticles",
+                    "nano particle",
+                    "nano particles",
+                ],
+            },
+            "Films_Coated_Surface": {
+                "description": (
+                    "Two-dimensional films or coatings on a surface, including "
+                    "surfaces with different degrees of roughness or particle coverage."
+                ),
+                "dictionary_terms": [
+                    "film",
+                    "films",
+                    "coated surface",
+                    "coated surfaces",
+                    "coating",
+                    "coatings",
+                    "thin film",
+                    "thin films",
+                ],
+            },
+            "Powder": {
+                "description": (
+                    "SEM images assigned to the powder category in the annotated dataset."
+                ),
+                "dictionary_terms": [
+                    "powder",
+                    "powders",
+                    "powder sample",
+                    "powder samples",
+                ],
+            },
+            "Tips": {
+                "description": (
+                    "Tip-like structures, including images commonly associated "
+                    "with atomic force microscopy probe tips."
+                ),
+                "dictionary_terms": [
+                    "tip",
+                    "tips",
+                    "AFM tip",
+                    "AFM tips",
+                    "probe tip",
+                    "probe tips",
+                ],
+            },
+            "Nanowires": {
+                "description": (
+                    "One-dimensional nanowire structures. In the dataset hierarchy, "
+                    "nanowires can include individual, few, entangled or forest-like arrangements."
+                ),
+                "dictionary_terms": [
+                    "nanowire",
+                    "nanowires",
+                    "nano wire",
+                    "nano wires",
+                ],
+            },
+            "Biological": {
+                "description": (
+                    "SEM images of biological samples grouped into the Biological "
+                    "category of the annotated dataset."
+                ),
+                "dictionary_terms": [
+                    "biological",
+                    "biological sample",
+                    "biological samples",
+                    "bio sample",
+                    "bio samples",
+                ],
+            },
+            "MEMS_devices_and_electrodes": {
+                "description": (
+                    "Microelectromechanical devices, electrodes and related "
+                    "microfabricated structures, typically associated with lithographic fabrication."
+                ),
+                "dictionary_terms": [
+                    "MEMS",
+                    "MEMS device",
+                    "MEMS devices",
+                    "electrode",
+                    "electrodes",
+                    "microelectromechanical",
+                    "microelectromechanical system",
+                    "microelectromechanical systems",
+                    "microdevice",
+                    "microdevices",
+                ],
+            },
+            "Fibres": {
+                "description": (
+                    "One-dimensional fibrous structures assigned to the dedicated "
+                    "Fibres category of the annotated dataset."
+                ),
+                "dictionary_terms": [
+                    "fibre",
+                    "fibres",
+                    "fiber",
+                    "fibers",
+                    "fibrous",
+                ],
+            },
+        },
+    },
+
+    "detector": {
+        "type": "categorical",
+        "description": (
+            "Detector or signal channel used to form the SEM image. "
+            "Detector choice affects the type of electron signal recorded "
+            "and therefore the appearance and scientific information represented in the image."
+        ),
+        "values": {
+            "InLens": {
+                "description": (
+                    "In-lens detector signal used for SEM image formation. "
+                    "The instrument described in the dataset paper includes "
+                    "a high-efficiency in-lens detector."
+                ),
+                "dictionary_terms": [
+                    "InLens",
+                    "in lens",
+                    "in-lens",
+                    "inlens",
+                    "in lens detector",
+                    "in-lens detector",
+                ],
+            },
+            "SE2": {
+                "description": (
+                    "Secondary-electron detector channel labelled SE2 "
+                    "in the instrument metadata."
+                ),
+                "dictionary_terms": [
+                    "SE2",
+                    "se2",
+                    "secondary electron",
+                    "secondary electrons",
+                    "secondary electron detector",
+                    "SE detector",
+                ],
+            },
+            "HDAsB": {
+                "description": (
+                    "Backscattered-electron detector channel labelled HDAsB "
+                    "in the instrument metadata."
+                ),
+                "dictionary_terms": [
+                    "HDAsB",
+                    "hdasb",
+                    "backscatter detector",
+                    "backscattered electron detector",
+                    "backscattered electrons",
+                    "BSE detector",
+                    "BSE",
+                ],
+            },
+        },
+    },
+}
+
+# __________ METADATA SCHEMA HELPERS __________
+def build_metadata_schema_description() -> str:
+    """
+    Convert the internal metadata schema into JSON for the metadata
+    extraction LLM.
+
+    The schema contains all information the LLM needs to map natural
+    language to canonical metadata fields and values.
+    """
+    return json.dumps(METADATA_SCHEMA, indent=2, ensure_ascii=False)
+
+METADATA_SCHEMA_DESCRIPTION = build_metadata_schema_description()
+
 
 TEMPLATE = [
     ChatMessage.from_system(
         """
         You are an expert in Scanning Electron Microscopy (SEM), helping a
         researcher review SEM image candidates that have already been
-        ranked by visual similarity to their query. The ranking was done
-        by the retrieval system, not by you -- do not assign relevance
-        scores or claim to judge how well an image matches the query.
+        ranked by visual similarity to their query.
+        
+        The ranking was done by the retrieval system, not by you. 
+        Do not assign relevance scores or claim to judge how well an image 
+        matches the query.
 
         The actual images will be shown to the researcher separately.
-        Your job is to briefly summarize what distinguishes each
-        candidate: visible morphology described in the notes below,
-        magnification, working distance, beam time, and any other
-        relevant microscope settings that might help the researcher pick
-        one to inspect further.
 
-        Do NOT invent information. Use only the retrieved context.
+        Your job is to briefly summarize what distinguishes each candidate,
+        including visible morphology and, when available in the retrieved
+        context, relevant microscope metadata such as magnification, working
+        distance, beam time, and other settings.
+
+        Use the metadata provided in the context when it is available and
+        relevant. Do not invent missing metadata.
+
+        Do NOT invent information. 
+        Use only the retrieved context.
         """
     ),
     ChatMessage.from_user(
@@ -74,42 +555,6 @@ TEMPLATE = [
     )
 ]
 
-INSTRUCTION = "Represent the user's input."
-
-METADATA_FIELDS = [
-    "AP_WD",
-    "AP_FREE_WD",
-    "AP_BEAM_TIME",
-    "AP_STAGE_LOW_Z",
-    "AP_STAGE_CENTRE_X",
-    "AP_C3",
-    "AP_EHT_CAL_30KV",
-    "AP_EHT_CAL_10KV",
-    "AP_EHT_CAL_100",
-    "AP_EHT_CAL_24KV",
-    "AP_MINMAG",
-]
-
-# Right now, all fields are taken relative to the value passed, ±10%
-# TODO: tune this -> some might need an absolute range (e.g., ±10% of a very small value will practically be exact)
-FIELD_CONFIG = {
-    "AP_WD":             {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_FREE_WD":        {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"}, 
-    "AP_BEAM_TIME":      {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_STAGE_LOW_Z":    {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_STAGE_CENTRE_X": {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_C3":             {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_EHT_CAL_30KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_EHT_CAL_10KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_EHT_CAL_100":    {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_EHT_CAL_24KV":   {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-    "AP_MINMAG":         {"type": "range", "tolerance": 0.10, "tolerance_type": "relative"},
-}
-
-VALID_OPERATORS = {">=", "<=", "~", "between"}
-
-if not VLLM_API_KEY:
-    raise RuntimeError("VLLM_API_KEY is not set.")
 
 def get_document_store() -> QdrantDocumentStore:
     """
@@ -127,137 +572,630 @@ def get_vllm_secret() -> Secret:
 
 @component
 class QueryMetadataExtractor():
+    """
+    Extract metadata constraints from a natural-language query.
+
+    The LLM is responsible for mapping the user's wording to canonical
+    metadata fields and categorical values.
+
+    Python is responsible for validating the result and converting it
+    into a Qdrant filter.
+    """
     def __init__(self):
         template = [
             ChatMessage.from_system(
                 """
-                You are part of an information system that processes users queries.
-                Given a user query you extract information from it that matches a given list of metadata fields.
-                The information to be extracted from the query must match the semantics associated with the given metadata fields.
-                The information that you extracted from the query will then be used as filters to narrow down the search space
-                when querying an index.
+                You are part of an information system that extracts SEM metadata
+                constraints from natural-language user queries.
 
-                For each field you extract, return an object with "operator" and "value":
-                - ">="      -> greater than or equal to value
-                - "<="      -> less than or equal to value
-                - "~"       -> approximately equal to value (use this when the user says "around", "about", "roughly",
-                            "approximately", or gives an exact-sounding value with no qualifier, e.g. "=", "exactly")
-                - "between" -> use this when the user gives a range with two bounds; "value" must then be a list of
-                            two numbers [low, high] instead of a single number
+                Your task is to identify metadata constraints explicitly provided by
+                the user and map them to the canonical metadata fields and values
+                defined in the supplied metadata schema.
 
-                The extracted information in 'Extracted metadata' must be returned as a valid JSON structure.
-                Only include a key in the output if the query explicitly provides or clearly implies its value.
-                If no metadata fields are present in the query, return an empty JSON object: {}
-                ###
-                Example 1:
-                Query: "What is the resolution of this microscope image?"
-                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
-                Extracted metadata fields: {}
-                ###
-                Example 2:
-                Query: "Show me images with a working distance around 8mm"
-                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
-                Extracted metadata fields: {"AP_WD": {"operator": "~", "value": 8}}
-                ###
-                Example 3:
-                Query: "Find images with beam time greater than 30 seconds"
-                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
-                Extracted metadata fields: {"AP_BEAM_TIME": {"operator": ">=", "value": 30}}
-                ###
-                Example 4:
-                Query: "Show me images with working distance below 5mm"
-                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
-                Extracted metadata fields: {"AP_WD": {"operator": "<=", "value": 5}}
-                ###
-                Example 5:
-                Query: "Show me images with beam time between 20 and 40 seconds"
-                Metadata fields: ["AP_WD", "AP_BEAM_TIME"]
-                Extracted metadata fields: {"AP_BEAM_TIME": {"operator": "between", "value": [20, 40]}}
+                The metadata schema contains:
+                - canonical field names
+                - field types
+                - scientific descriptions
+                - alternative/dictionary terms
+                - units for numeric fields
+                - allowed values for categorical fields
+                - alternative terms and descriptions for categorical values
+
+                Use the scientific descriptions and dictionary terms to understand
+                what the user means. The user does not need to use the canonical
+                field name.
+
+                Do NOT use general SEM knowledge to infer metadata that the user
+                did not provide.
+
+                ------------------------------------------------------------
+                REQUIRED OUTPUT FORMAT
+                ------------------------------------------------------------
+
+                The output MUST always be a single JSON object.
+
+                Each metadata field MUST be a top-level key in the JSON object.
+
+                The value associated with each field MUST be an object containing:
+                - "operator"
+                - "value"
+
+                The canonical metadata field name MUST be used as the top-level key.
+
+                The keys "operator" and "value" MUST NEVER appear directly at
+                the top level of the JSON object.
+
+                For example, if the canonical field is "category", the correct
+                structure is:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    }
+                }
+
+                The following structure is INVALID:
+
+                {
+                    "operator": "==",
+                    "value": "Porous_Sponge"
+                }
+
+                ------------------------------------------------------------
+                NUMERIC FIELDS
+                ------------------------------------------------------------
+
+                For numeric fields, return:
+
+                {
+                    "<canonical_field_name>": {
+                        "operator": "<operator>",
+                        "value": <numeric value>
+                    }
+                }
+
+                Supported operators:
+
+                ">=": Greater than or equal to the specified value.
+
+                "<=": Less than or equal to the specified value.
+
+                "~": Approximately equal to the specified value.
+
+                Use "~" when the user says:
+                - around
+                - about
+                - roughly
+                - approximately
+
+                Also use "~" when the user gives a numeric value that sounds
+                like an exact desired value without specifying an explicit
+                comparison or range.
+
+                "between": Use this when the user explicitly gives a range with two bounds.
+
+                    The value MUST be an array:
+
+                    [low, high]
+
+                Examples:
+
+                User:
+                "images with pixel size around 100 nm"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": "~",
+                        "value": 100
+                    }
+                }
+
+                User:
+                "images with pixel size greater than 100 nm"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": ">=",
+                        "value": 100
+                    }
+                }
+
+                User:
+                "images with pixel size up to 100 nm"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": "<=",
+                        "value": 100
+                    }
+                }
+
+                User:
+                "images with pixel size between 80 and 120 nm"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": "between",
+                        "value": [80, 120]
+                    }
+                }
+
+                Do not convert units unless the query explicitly provides a unit
+                that can be safely interpreted.
+
+                If the user provides a unit, use the canonical numeric field
+                and represent the numeric value consistently with the metadata
+                schema.
+
+                ------------------------------------------------------------
+                CATEGORICAL FIELDS
+                ------------------------------------------------------------
+
+                For categorical fields, map the user's wording to exactly one
+                of the allowed canonical values defined in the metadata schema.
+
+                The canonical categorical value MUST be used.
+
+                The categorical field MUST be the top-level JSON key.
+
+                The structure MUST be:
+
+                {
+                    "<canonical_field_name>": {
+                        "operator": "==",
+                        "value": "<allowed canonical value>"
+                    }
+                }
+
+                Never return a categorical value that is not present in the
+                allowed values defined by the schema.
+
+                Never invent a categorical value.
+
+                Example:
+
+                Suppose the schema contains:
+
+                category:
+                    Porous_Sponge:
+                        dictionary terms:
+                            porous sponge
+                            porous sponges
+                            sponge
+                            sponge-like structure
+
+                Then the query:
+
+                "show SEM images that are Porous Sponges"
+
+                MUST produce:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    }
+                }
+
+                It MUST NOT produce:
+
+                {
+                    "operator": "==",
+                    "value": "Porous_Sponge"
+                }
+
+                Another example:
+
+                Suppose the schema contains:
+
+                detector:
+                    SE2:
+                        dictionary terms:
+                            secondary electron
+                            secondary electron detector
+                            SE detector
+
+                Then:
+
+                "images acquired with a secondary electron detector"
+
+                MUST produce:
+
+                {
+                    "detector": {
+                        "operator": "==",
+                        "value": "SE2"
+                    }
+                }
+
+                ------------------------------------------------------------
+                MULTIPLE METADATA CONSTRAINTS
+                ------------------------------------------------------------
+
+                If the user provides multiple metadata constraints, include all
+                of them as separate top-level fields in the same JSON object.
+
+                For example:
+
+                User:
+                "show SEM images that are Porous Sponges with 100 nm pixel size"
+
+                Output:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    },
+                    "pixel_size_nm": {
+                        "operator": "~",
+                        "value": 100
+                    }
+                }
+
+                Another example:
+
+                User:
+                "show Porous Sponge images acquired at 10 kV with a 100 nm pixel size"
+
+                Output:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    },
+                    "accelerating_voltage_kv": {
+                        "operator": "~",
+                        "value": 10
+                    },
+                    "pixel_size_nm": {
+                        "operator": "~",
+                        "value": 100
+                    }
+                }
+
+                Each constraint MUST have its own canonical field name.
+
+                Do not combine multiple constraints into a single object.
+
+                ------------------------------------------------------------
+                GENERAL RULES
+                ------------------------------------------------------------
+
+                1. Only include a metadata field if the query explicitly provides
+                or clearly implies its value.
+
+                2. Do not infer metadata from general SEM knowledge.
+
+                3. Do not infer metadata from the morphology described by the user.
+
+                4. Do not invent canonical field names.
+
+                5. Do not invent categorical values.
+
+                6. For categorical fields, the value MUST exactly match one of the
+                allowed canonical values in the supplied schema.
+
+                7. For numeric fields, use only the supported operators:
+                >=, <=, ~, between.
+
+                8. For "between", the value MUST contain exactly two numeric values:
+                [low, high]
+
+                9. Preserve the meaning of the user's constraint. Do not silently
+                change a comparison into another comparison.
+
+                10. If the user does not specify a metadata constraint, do not
+                    invent one.
+
+                11. If no metadata fields are present in the query, return exactly:
+
+                {}
+
+                12. The output must contain ONLY valid JSON.
+
+                13. Do not include Markdown code fences.
+
+                14. Do not include explanations, comments, or additional text.
+
+                15. The top-level JSON object MUST contain canonical metadata field
+                    names, never "operator" or "value".
+
+                ------------------------------------------------------------
+                FINAL EXAMPLES
+                ------------------------------------------------------------
+
+                Query:
+                "Find spherical particles."
+
+                Output:
+
+                {}
+
+                Query:
+                "show images that are Porous Sponges"
+
+                Output:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    }
+                }
+
+                Query:
+                "show images with 100 nm pixel size"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": "~",
+                        "value": 100
+                    }
+                }
+
+                Query:
+                "show Porous Sponge images with 100 nm pixel size"
+
+                Output:
+
+                {
+                    "category": {
+                        "operator": "==",
+                        "value": "Porous_Sponge"
+                    },
+                    "pixel_size_nm": {
+                        "operator": "~",
+                        "value": 100
+                    }
+                }
+
+                Query:
+                "show images with pixel size between 50 and 100 nm and category Powder"
+
+                Output:
+
+                {
+                    "pixel_size_nm": {
+                        "operator": "between",
+                        "value": [50, 100]
+                    },
+                    "category": {
+                        "operator": "==",
+                        "value": "Powder"
+                    }
+                }
+
+                Remember:
+
+                - Top-level keys = canonical metadata field names.
+                - Nested "operator" = comparison operator.
+                - Nested "value" = extracted value.
+                - Never put "operator" or "value" directly at the top level.
                 """
             ),
             ChatMessage.from_user(
                 """
-                Query: {{ query }}
-                Metadata fields: {{ metadata_fields }}
-                Extracted metadata fields:
+                Query:
+                {{ query }}
+
+                Metadata schema:
+                {{ metadata_schema }}
+
+                Extracted metadata:
                 """
             ),
         ]
 
         self.pipeline = Pipeline()
-        self.pipeline.add_component("builder", ChatPromptBuilder(template=template, required_variables={"query", "metadata_fields"}))
-        self.pipeline.add_component("llm", VLLMChatGenerator(model=GENERATION_MODEL_ID, api_key=get_vllm_secret(), api_base_url=API_URL, generation_kwargs={"response_format": {"type": "json_object"}}))
+
+        self.pipeline.add_component(
+            "builder", 
+            ChatPromptBuilder(
+                template=template, 
+                required_variables={"query", "metadata_schema"}
+            )
+        )
+        self.pipeline.add_component(
+            "llm", 
+            VLLMChatGenerator(
+                model=GENERATION_MODEL_ID, 
+                api_key=get_vllm_secret(), 
+                api_base_url=API_URL, 
+                generation_kwargs={"response_format": {"type": "json_object"}}
+            )
+        )
         self.pipeline.connect("builder", "llm")
 
-    def build_condition(self, field: str, extracted: dict, config: dict):
+    def build_condition(self, field: str, extracted: dict):
+        """
+        Validate one extracted metadata field and convert it into
+        a Qdrant filter condition.
+        """
+        schema = METADATA_SCHEMA[field]
+        field_type = schema["type"]
+
         operator = extracted.get("operator")
         value = extracted.get("value")
 
-        if operator not in VALID_OPERATORS:
-            return None  # guard against hallucinated operator strings
+        # __________ Categorical fields __________
+        if field_type == "categorical":
+            if operator != "==":
+                return None
 
+            if not isinstance(value, str):
+                return None
+
+            allowed_values = schema.get("values", {})
+
+            if value not in allowed_values:
+                return None
+
+            return {
+                "field": f"meta.{field}",
+                "operator": "==",
+                "value": value,
+            }
+
+        # __________ Numeric fields __________
+        if field_type != "numeric":
+            return None
+
+        valid_numeric_operators = {
+            ">=",
+            "<=",
+            "~",
+            "between",
+        }
+
+        if operator not in valid_numeric_operators:
+            return None
+
+        # __________ Numeric range __________
         if operator == "between":
-            if not (isinstance(value, list) and len(value) == 2):
-                return None  # malformed range, drop rather than guess
+            if not isinstance(value, list) or len(value) != 2:
+                return None
+
             try:
-                low, high = float(value[0]), float(value[1])
+                low = float(value[0])
+                high = float(value[1])
             except (TypeError, ValueError):
                 return None
+
             if low > high:
-                low, high = high, low  # tolerate reversed bounds from the LLM
+                low, high = high, low
+
             return {
                 "operator": "AND",
                 "conditions": [
-                    {"field": f"meta.{field}", "operator": ">=", "value": low},
-                    {"field": f"meta.{field}", "operator": "<=", "value": high},
+                    {
+                        "field": f"meta.{field}",
+                        "operator": ">=",
+                        "value": low,
+                    },
+                    {
+                        "field": f"meta.{field}",
+                        "operator": "<=",
+                        "value": high,
+                    },
                 ],
             }
-        
+
+        # __________ Numeric value __________
         try:
             value = float(value)
         except (TypeError, ValueError):
-            return None  # LLM gave something non-numeric for a numeric field, drop it
+            return None
 
+        # __________ Approximate numeric value __________
         if operator == "~":
-            tol = config.get("tolerance", 0.1)
-            # If it not "relative", it will be absolute -> take as delta the absolute tolerance set
-            delta = abs(value) * tol if config.get("tolerance_type", "relative") == "relative" else tol
+            filter_config = schema.get("filter", {})
+
+            tolerance = filter_config.get("tolerance", 0.10)
+
+            tolerance_type = filter_config.get("tolerance_type", "relative")
+
+            if tolerance_type == "relative":
+                delta = abs(value) * tolerance
+            else:
+                delta = tolerance
+
             return {
                 "operator": "AND",
                 "conditions": [
-                    {"field": f"meta.{field}", "operator": ">=", "value": value - delta},
-                    {"field": f"meta.{field}", "operator": "<=", "value": value + delta},
+                    {
+                        "field": f"meta.{field}",
+                        "operator": ">=",
+                        "value": value - delta,
+                    },
+                    {
+                        "field": f"meta.{field}",
+                        "operator": "<=",
+                        "value": value + delta,
+                    },
                 ],
             }
 
         # ">=", "<=" map directly onto Qdrant's own operator strings
-        return {"field": f"meta.{field}", "operator": operator, "value": value}
+        return {
+            "field": f"meta.{field}",
+            "operator": operator,
+            "value": value,
+        }
 
-    @component.output_types(filters=Dict[str, str])
-    def run(self, query: str, metadata_fields: List[str]):
-        result = self.pipeline.run({'builder': {'query': query, 'metadata_fields': metadata_fields}})
+    @component.output_types(filters = dict[str, str])
+    def run(self, query: str, metadata_schema: str):
+        """
+        Extract metadata from the query and convert it into a Qdrant
+        filter.
+
+        Invalid or hallucinated fields/values are silently discarded.
+        If nothing valid remains, no filter is returned.
+        """
+        result = self.pipeline.run({'builder': {'query': query, 'metadata_schema': metadata_schema}})
         try:
-            metadata = json.loads(result['llm']['replies'][0].text) # key/value pairs the LLM decided to extract
+            replies = result["llm"]["replies"]
+
+            if not replies:
+                return {"filters": None}
+
+            metadata = json.loads(replies[0].text)
+
+            log.info(f"QUERY: {query}")
+            log.info(f"EXTRACTED METADATA: {metadata}")
+
+            if not isinstance(metadata, dict):
+                return {"filters": None}
 
             conditions = []
-            for key, extracted in metadata.items():
-                if key not in metadata_fields:
-                    continue  # guard against hallucinated field names
-                config = FIELD_CONFIG.get(key, {"type": "range"})
-                cond = self.build_condition(key, extracted, config)
-                if cond is not None:
-                    conditions.append(cond)
+
+            for field, extracted in metadata.items():
+
+                # Prevent hallucinated field names.
+                if field not in METADATA_SCHEMA:
+                    continue
+
+                # Each field must contain an extraction object.
+                if not isinstance(extracted, dict):
+                    continue
+
+                condition = self.build_condition(field, extracted)
+
+                if condition is not None:
+                    conditions.append(condition)
+
+            log.info(f"GENERATED CONDITIONS: {conditions}")
 
             if not conditions:
                 return {"filters": None}
 
             return {"filters": {"operator": "AND", "conditions": conditions}}
-        except Exception:
+
+        except Exception as exc:
+            log.warning("Failed to extract query metadata: {}", exc)
             return {"filters": None}
 
 
 @component
 class QueryEmbedder():
+    """
+    Generate a Qwen3-VL embedding from either text or an image.
+
+    If an image is provided, the image is embedded directly.
+    Otherwise the textual query is embedded.
+    """
     def __init__(self, model: str, api_base_url: str, api_key: str):
         self.model = model
         self.client = OpenAI(base_url=api_base_url, api_key=api_key)
@@ -304,55 +1242,43 @@ def render_image_gallery(documents) -> str:
         return ""
 
     gallery = "\n\n**Candidate images:**\n"
+
     for idx, doc in enumerate(documents, start=1):
-        label = doc.meta.get("ImageOriginalName", doc.id)
-        gallery += f"\n{idx}. {label}\n"
-        gallery += f"\n![{label}]({THUMBNAIL_BASE_URL}/{doc.id}.png)\n"
+        gallery += f"\n{idx}. Image ID: `{doc.id}`\n"
+        gallery += f"\n![SEM image {doc.id}]({THUMBNAIL_BASE_URL}/{doc.id}.png)\n"
+    
     return gallery
-
-def on_pipeline_end(result: dict) -> str:
-    """
-    Called once after the streamed LLM output finishes.
-
-    `result` is the full pipeline.run() output dict, keyed by component name
-    (same shape as the non-streaming path). We pull the documents the
-    retriever found and append them as a source list, since the streaming
-    path skips AnswerBuilder and would otherwise surface no citations at all.
-
-    Whatever this returns is appended to the message Open WebUI displays.
-    """
-    answers = result.get("answer_builder", {}).get("answers", [])
-    if not answers:
-        return ""
-    documents = answers[0].documents
-    return render_image_gallery(documents)
 
 
 class PipelineWrapper(BasePipelineWrapper):
     def setup(self) -> None:
         document_store = get_document_store()
 
-        pipeline = Pipeline()
-        pipeline.add_component("query_embedder", QueryEmbedder(model=EMBED_MODEL_ID, api_base_url=API_URL, api_key=VLLM_API_KEY))
-        pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=5))
-        pipeline.connect("query_embedder.embedding", "retriever")
+        # __________ RETRIEVAL PIPELINE __________
+        self.retrieval_pipeline = Pipeline()
 
-        pipeline.add_component("metadata_extractor", QueryMetadataExtractor()) # TODO
-        pipeline.connect("metadata_extractor.filters", "retriever.filters") # TODO
+        self.retrieval_pipeline.add_component("query_embedder", QueryEmbedder(model=EMBED_MODEL_ID, api_base_url=API_URL, api_key=VLLM_API_KEY))
+        self.retrieval_pipeline.add_component("metadata_extractor", QueryMetadataExtractor())
+        self.retrieval_pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=5))
 
-        pipeline.add_component("prompt_builder", ChatPromptBuilder(template=TEMPLATE, required_variables={"question", "documents"}))
-        pipeline.connect("retriever", "prompt_builder")
+        self.retrieval_pipeline.connect("metadata_extractor.filters", "retriever.filters")
+        self.retrieval_pipeline.connect("query_embedder.embedding", "retriever")
 
-        pipeline.add_component("llm", VLLMChatGenerator(model=GENERATION_MODEL_ID, api_key=get_vllm_secret(), api_base_url=API_URL))
-        pipeline.connect("prompt_builder", "llm")
+        # __________ GENERATION PIPELINE __________
+        self.generation_pipeline = Pipeline()
 
-        pipeline.add_component("answer_builder", AnswerBuilder())
-        pipeline.connect("llm", "answer_builder")
-        pipeline.connect("retriever", "answer_builder")
+        self.generation_pipeline.add_component("prompt_builder", ChatPromptBuilder(template=TEMPLATE, required_variables={"question", "documents"}))
+        self.generation_pipeline.add_component("llm", VLLMChatGenerator(model=GENERATION_MODEL_ID, api_key=get_vllm_secret(), api_base_url=API_URL))
+        self.generation_pipeline.add_component("answer_builder", AnswerBuilder())
 
-        self.pipeline = pipeline
+        self.generation_pipeline.connect("prompt_builder", "llm")
+        self.generation_pipeline.connect("llm", "answer_builder")
 
     def extract_query(self, messages: list[dict]):
+        """
+        Extract the latest user text and any image URLs from the
+        OpenWebUI message structure.
+        """
         msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
         if msg is None:
             return "", []
@@ -361,7 +1287,8 @@ class PipelineWrapper(BasePipelineWrapper):
         if isinstance(content, str):
             return content, []
 
-        text, images = "", []
+        text = "" 
+        images = []
 
         for part in content:
             if part.get("type") == "text":
@@ -374,36 +1301,75 @@ class PipelineWrapper(BasePipelineWrapper):
 
         return text, images
 
+    def retrieve_documents(self, question: str, images: list[str]):
+        """
+        Execute the retrieval stage synchronously.
+
+        This is intentionally separated from generation so that we can
+        detect zero-result retrievals before invoking the LLM.
+        """
+        retrieval_run_args = {
+            "metadata_extractor": {
+                "query": question,
+                "metadata_schema": METADATA_SCHEMA_DESCRIPTION,
+            },
+            "query_embedder": {
+                "text": question,
+                "image_data_urls": images,
+            },
+        }
+
+        response = self.retrieval_pipeline.run(retrieval_run_args)
+
+        documents = (response.get("retriever", {}).get("documents", []))
+
+        log.info(f"Retrieved {len(documents)} documents for query: '{question}'")
+
+        for document in documents:
+            log.info(f"Retrieved document {document.id} with metadata: {document.meta}")
+
+        return documents
+
     def run_chat_completion(self, model: str, messages: list[dict], body: dict) -> Union[str, Generator]:
         question, images = self.extract_query(messages)
         log.trace("Question: {}", question)
 
+        # __________ Stage 1: Retrieval __________
+        # This ALWAYS happens synchronously, even for streaming requests
+        documents = self.retrieve_documents(question=question, images=images)
+
+        # Zero-result handling
+        # This happens BEFORE the generation pipeline is started.
+        if not documents:
+            return ("I couldn't find any SEM images matching all the requested criteria.")
+
+        # __________ Stage 2: Generation __________
+        generation_run_args = {
+            "prompt_builder": {
+                "question": question,
+                "documents": documents,
+            },
+            "answer_builder": {
+                "query": question,
+            },
+        }
+
         if body.get("stream", False):
-            # Real token-by-token streaming: streaming_generator wires up
-            # llm's streaming_callback under the hood and yields chunks as
-            # the VLLMChatGenerator produces them.
+
+            def on_generation_end(result: dict) -> str:
+                return render_image_gallery(documents)
+
             return streaming_generator(
-                pipeline=self.pipeline,
-                pipeline_run_args={
-                    "metadata_extractor": {"query": question, "metadata_fields": METADATA_FIELDS}, # NOTE
-                    "query_embedder": {"text": question, "image_data_urls": images},
-                    "prompt_builder": {"question": question},
-                    "answer_builder": {"query": question},
-                },
-                on_pipeline_end=on_pipeline_end,
+                pipeline=self.generation_pipeline,
+                pipeline_run_args=generation_run_args,
+                on_pipeline_end=on_generation_end,
             )
 
-        # Non-streaming path: run synchronously and return the final text.
-        response = self.pipeline.run(
-            {
-                "metadata_extractor": {"query": question, "metadata_fields": METADATA_FIELDS}, # NOTE
-                "query_embedder": {"text": question, "image_data_urls": images},
-                "prompt_builder": {"question": question},
-                "answer_builder": {"query": question},
-            }
-        )
+        # __________ Non-streaming generation __________
+        response = self.generation_pipeline.run(generation_run_args)
+
         answers = response.get("answer_builder", {}).get("answers", [])
         if not answers:
             return "Sorry, I couldn't generate an answer."
-        
+
         return answers[0].data + render_image_gallery(answers[0].documents)
