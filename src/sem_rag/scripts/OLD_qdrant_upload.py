@@ -15,9 +15,8 @@ from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 
 from openai import OpenAI
 
-# from sem_rag.config.settings import *
-from config.settings import *
-from utils.metadata import parse_value_with_unit
+from sem_rag.config.settings import *
+from sem_rag.utils.metadata import parse_value_with_unit
 
 client = OpenAI(base_url=VLLM.API_URL, api_key=VLLM.API_KEY)
 

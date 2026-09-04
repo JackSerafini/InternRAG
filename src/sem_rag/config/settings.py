@@ -17,21 +17,25 @@ class VLLM:
     API_URL = os.getenv("VLLM_API_URL", "https://orfeo-llm.areasciencepark.it/vllm/v1")
 
     GEMMA_MODEL = "google/gemma-4-26B-A4B-it"
+    QWEN36_MODEL = "Qwen/Qwen3.6-35B-A3B-FP8"
+    QWEN38_MODEL = "Qwen/Qwen3.8-27B-FP8"
     GPTOSS_MODEL = "openai/gpt-oss-120b"
     EMBEDDING_MODEL = "Qwen/Qwen3-VL-Embedding-8B"
 
 
 class SEMDataset:
-    CROPS = DATA_DIR / "SEM/crops"
-    JSON = DATA_DIR / "SEM/json"
+    SEM_DIR = DATA_DIR / "SEM"
 
-    EMBEDDINGS_QWEN = DATA_DIR / "SEM/embeddings_QWEN"
+    CROPS = SEM_DIR / "crops"
+    JSON = SEM_DIR / "json"
 
-    CATEGORICAL_SETTINGS = DATA_DIR / "SEM/SEM_RAG_categorical_fields_dictionary.csv"
-    NUMERICAL_SETTINGS = DATA_DIR / "SEM/SEM_RAG_numeric_fields_dictionary.csv"
-    CATEGORIES = DATA_DIR / "SEM/filtered_categories.csv"
+    EMBEDDINGS_QWEN = SEM_DIR / "embeddings_QWEN"
+
+    CATEGORICAL_SETTINGS = SEM_DIR / "SEM_RAG_categorical_fields_dictionary.csv"
+    NUMERICAL_SETTINGS = SEM_DIR / "SEM_RAG_numeric_fields_dictionary.csv"
+    CATEGORIES = SEM_DIR / "filtered_categories.csv"
     
-    DESCRIPTIONS = DATA_DIR / "SEM/image_descriptions.json"
+    DESCRIPTIONS = SEM_DIR / "image_descriptions.json"
 
     THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop -> full field of view preserved, only resolution drops
     # tune down to (128,128) if payload size becomes an issue
@@ -75,3 +79,6 @@ class Qdrant:
 
     EMBEDDING_DIM_QWEN = 4096
     EMBEDDING_DIM_DINO = 768
+
+class Evaluation:
+    BM25_DIR = DATA_DIR / "bm25_index"

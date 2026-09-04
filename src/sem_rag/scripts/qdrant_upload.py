@@ -8,10 +8,10 @@ from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 from openai import OpenAI
 
 # from sem_rag.config.settings import *
-from config.settings import *
-from utils.dataset import load_all_metadata, load_embeddings, NUMERIC_FIELDS, CATEGORICAL_FIELDS, PAYLOAD_FIELDS_TO_INDEX
-from utils.image import encode_image
-from utils.image_descriptions import get_crop_path, load_descriptions, get_description
+from sem_rag.config.settings import *
+from sem_rag.utils.dataset import load_all_metadata, load_embeddings, NUMERIC_FIELDS, CATEGORICAL_FIELDS, PAYLOAD_FIELDS_TO_INDEX
+from sem_rag.utils.image import encode_image
+from sem_rag.utils.image_descriptions import get_crop_path, load_descriptions, get_description
 
 client = OpenAI(base_url=VLLM.API_URL, api_key=VLLM.API_KEY)
 
