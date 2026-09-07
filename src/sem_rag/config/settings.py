@@ -21,6 +21,7 @@ class VLLM:
     QWEN38_MODEL = "Qwen/Qwen3.8-27B-FP8"
     GPTOSS_MODEL = "openai/gpt-oss-120b"
     EMBEDDING_MODEL = "Qwen/Qwen3-VL-Embedding-8B"
+    JUDGE_MODEL = "Qwen/Qwen3.5-122B-A10B-FP8"
 
 
 class SEMDataset:
@@ -69,7 +70,7 @@ class TestSem:
 
 
 class Qdrant:
-    URL = "http://localhost:6333"
+    URL = "http://db-rag.dev.rd.areasciencepark.it"
 
     COLLECTION_QWEN = "SEM_qwen"
     OLD_COLLECTION_QWEN = "Test_OLDSEM_qwen"

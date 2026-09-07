@@ -4,8 +4,8 @@ import json
 import pandas as pd
 import torch
 
-from config.settings import SEMDataset
-from utils.metadata import parse_category, parse_value_with_unit, parse_pixel_size, parse_magnification
+from sem_rag.config.settings import SEMDataset
+from sem_rag.utils.metadata import parse_category, parse_value_with_unit, parse_pixel_size, parse_magnification
 
 
 def load_field_dictionaries() -> tuple[

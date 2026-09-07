@@ -7,7 +7,6 @@ from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 
 from openai import OpenAI
 
-# from sem_rag.config.settings import *
 from sem_rag.config.settings import *
 from sem_rag.utils.dataset import load_all_metadata, load_embeddings, NUMERIC_FIELDS, CATEGORICAL_FIELDS, PAYLOAD_FIELDS_TO_INDEX
 from sem_rag.utils.image import encode_image
@@ -121,13 +120,14 @@ def build_collection(collection_name, embeddings_folder, embedding_dim, json_fol
         )
 
     document_store = QdrantDocumentStore(
+        url=Qdrant.URL,
+        port=80,
         index=collection_name,
         embedding_dim=embedding_dim,
         recreate_index=True,
         payload_fields_to_index=PAYLOAD_FIELDS_TO_INDEX,
         write_batch_size=20,
         timeout=60,
-        url=Qdrant.URL,
     )
 
     embeddings = load_embeddings(embeddings_folder)
