@@ -5,7 +5,7 @@ import glob
 from openai import OpenAI
 
 from sem_rag.config.settings import VLLM, SEMDataset
-from sem_rag.utils.image import encode_image
+from sem_rag.image.encoding import encode_image
 
 client = OpenAI(base_url=VLLM.API_URL, api_key=VLLM.API_KEY)
 

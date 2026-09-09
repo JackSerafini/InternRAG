@@ -6,7 +6,7 @@ from openai import OpenAI
 from openai.types.create_embedding_response import CreateEmbeddingResponse
 
 from sem_rag.config.settings import VLLM
-from sem_rag.utils.image import encode_image, load_image_CLIP
+from sem_rag.image.encoding import encode_image, load_image_CLIP
 
 
 INSTRUCTION = "Represent the user's input."

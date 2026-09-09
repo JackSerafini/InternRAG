@@ -3,7 +3,7 @@ from haystack.document_stores.types import DuplicatePolicy
 from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 
 from sem_rag.config.settings import *
-from sem_rag.utils.dataset import load_embeddings
+from sem_rag.dataset.loader import load_embeddings
 
 
 def build_collection(collection_name, embeddings_folder, embedding_dim):
