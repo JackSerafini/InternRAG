@@ -31,6 +31,7 @@ class SEMDataset:
     JSON = SEM_DIR / "json"
 
     EMBEDDINGS_QWEN = SEM_DIR / "embeddings_QWEN"
+    EMBEDDINGS_CLIP = SEM_DIR / "embeddings_CLIP"
 
     CATEGORICAL_SETTINGS = SEM_DIR / "SEM_RAG_categorical_fields_dictionary.csv"
     NUMERICAL_SETTINGS = SEM_DIR / "SEM_RAG_numeric_fields_dictionary.csv"
@@ -76,10 +77,12 @@ class Qdrant:
     OLD_COLLECTION_QWEN = "Test_OLDSEM_qwen"
     # COLLECTION_DINO = "SEMImages_dino"
     OLD_COLLECTION_DINO = "Test_OLDSEM_dino"
+    COLLECTION_CLIP = "SEM_clip"
     COLLECTION_TEST = "Test"
 
     EMBEDDING_DIM_QWEN = 4096
     EMBEDDING_DIM_DINO = 768
+    EMBEDDING_DIM_CLIP = 512
 
 class Evaluation:
     BM25_DIR = DATA_DIR / "bm25_index"

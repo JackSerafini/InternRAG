@@ -1,11 +1,13 @@
 import io
 import base64
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
+
 def encode_image(
-        path: str, 
+        path: Path, 
         size: tuple[int, int] | None = None
 ) -> str:
     """
@@ -36,3 +38,19 @@ def encode_image(
     encoded_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     return f"data:image/png;base64,{encoded_image}"
+
+
+def load_image_CLIP(path: Path) -> Image.Image:
+    """
+    Load a NumPy image and convert it to an RGB PIL image.
+
+    Args:
+        path: Path to the `.npy` file containing the image array.
+
+    Returns:
+        The image as an RGB PIL image.
+    """
+    array = np.load(path)
+    image = Image.fromarray(array, mode="L").convert("RGB")
+
+    return image
