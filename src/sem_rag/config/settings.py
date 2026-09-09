@@ -39,8 +39,7 @@ class SEMDataset:
     
     DESCRIPTIONS = SEM_DIR / "image_descriptions.json"
 
-    THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop -> full field of view preserved, only resolution drops
-    # tune down to (128,128) if payload size becomes an issue
+    THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop (tune down to (128,128) if payload size becomes an issue)
 
 
 class TestSem:
@@ -52,8 +51,7 @@ class TestSem:
 
     DESCRIPTIONS = DATA_DIR / "subset_test_1000/image_descriptions.json"
 
-    THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop -> full field of view preserved, only resolution drops
-    # tune down to (128,128) if payload size becomes an issue
+    THUMBNAIL_SIZE = (224, 224)
 
     SETTINGS_KEYS = [
         "AP_WD",
@@ -75,7 +73,6 @@ class Qdrant:
 
     COLLECTION_QWEN = "SEM_qwen"
     OLD_COLLECTION_QWEN = "Test_OLDSEM_qwen"
-    # COLLECTION_DINO = "SEMImages_dino"
     OLD_COLLECTION_DINO = "Test_OLDSEM_dino"
     COLLECTION_CLIP = "SEM_clip"
     COLLECTION_TEST = "Test"
@@ -86,3 +83,5 @@ class Qdrant:
 
 class Evaluation:
     BM25_DIR = DATA_DIR / "bm25_index"
+
+    GABOR_FILE = DATA_DIR / "gabor_features/gabor_features.npz"
