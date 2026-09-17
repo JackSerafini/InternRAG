@@ -19,9 +19,7 @@ class VLLM:
     GEMMA_MODEL = "google/gemma-4-26B-A4B-it"
     QWEN36_MODEL = "Qwen/Qwen3.6-35B-A3B-FP8"
     QWEN38_MODEL = "Qwen/Qwen3.8-27B-FP8"
-    GPTOSS_MODEL = "openai/gpt-oss-120b"
     EMBEDDING_MODEL = "Qwen/Qwen3-VL-Embedding-8B"
-    JUDGE_MODEL = "Qwen/Qwen3.5-122B-A10B-FP8"
 
 
 class SEMDataset:
@@ -32,6 +30,7 @@ class SEMDataset:
 
     EMBEDDINGS_QWEN = SEM_DIR / "embeddings_QWEN"
     EMBEDDINGS_CLIP = SEM_DIR / "embeddings_CLIP"
+    EMBEDDINGS_DINO = SEM_DIR / "embeddings_DINOv3"
 
     CATEGORICAL_SETTINGS = SEM_DIR / "SEM_RAG_categorical_fields_dictionary.csv"
     NUMERICAL_SETTINGS = SEM_DIR / "SEM_RAG_numeric_fields_dictionary.csv"

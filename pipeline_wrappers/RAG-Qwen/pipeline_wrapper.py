@@ -3,13 +3,14 @@ Hayhooks PipelineWrapper for the QWEN RAG retrieval pipeline.
 """
 import os
 import json
+import numpy as np
 from collections.abc import Generator
 from typing import Union
 
 from haystack import Pipeline, component
 from haystack.utils import Secret
 from haystack.components.builders import AnswerBuilder, ChatPromptBuilder
-from haystack.dataclasses import ChatMessage
+from haystack.dataclasses import Document, ChatMessage
 from haystack_integrations.components.generators.vllm import VLLMChatGenerator
 from haystack_integrations.document_stores.qdrant import QdrantDocumentStore
 from haystack_integrations.components.retrievers.qdrant import QdrantEmbeddingRetriever
@@ -32,6 +33,9 @@ GENERATION_MODEL_ID = "google/gemma-4-26B-A4B-it"
 EMBED_MODEL_ID = "Qwen/Qwen3-VL-Embedding-8B"
 EMBEDDING_DIM = 4096
 
+MMR_CANDIDATES = 50
+TOP_K = 5
+
 QDRANT_COLLECTION = "SEM_qwen"
 
 INSTRUCTION = "Represent the user's input."
@@ -50,10 +54,6 @@ if not VLLM_API_KEY:
 #   - alternative/dictionary terms
 #   - units for numeric fields
 #   - allowed values and their descriptions for categorical fields
-#
-# Keeping this schema here means the pipeline_wrapper.py is self-contained
-# and does not need the original CSV files at runtime.
-# ============================================================================
 
 # Right now, all fields are taken relative to the value passed, ±10%
 # TODO: tune this -> some might need an absolute range (e.g., ±10% of a very small value will practically be exact)
@@ -513,25 +513,78 @@ TEMPLATE = [
     ChatMessage.from_system(
         """
         You are an expert in Scanning Electron Microscopy (SEM), helping a
-        researcher review SEM image candidates that have already been
-        ranked by visual similarity to their query.
-        
-        The ranking was done by the retrieval system, not by you. 
-        Do not assign relevance scores or claim to judge how well an image 
-        matches the query.
+        researcher review SEM image candidates that have already been ranked
+        by visual similarity to their query.
+
+        The ranking was performed by the retrieval system, not by you.
+        Do not assign relevance scores, rank candidates, or claim to judge
+        how well an image matches the query.
 
         The actual images will be shown to the researcher separately.
 
-        Your job is to briefly summarize what distinguishes each candidate,
-        including visible morphology and, when available in the retrieved
-        context, relevant microscope metadata such as magnification, working
-        distance, beam time, and other settings.
+        For each retrieved candidate, produce a concise summary.
 
-        Use the metadata provided in the context when it is available and
-        relevant. Do not invent missing metadata.
+        OUTPUT FORMAT:
 
-        Do NOT invent information. 
-        Use only the retrieved context.
+        Each candidate must follow exactly this format:
+
+        **Image <ID>**
+
+        - **Morphology:** <brief description>
+
+        - **Metadata:** <metadata fields>
+
+        FORMATTING RULES:
+
+        - Always write the image identifier in bold as **Image <ID>**.
+        - Always write **Morphology:** and **Metadata:** in bold.
+        - Do not use bullet points for Morphology or Metadata.
+        - Put the complete metadata on a single line.
+        - Separate every metadata field using the exact separator " | ".
+        - Do not use commas or semicolons as separators between metadata fields.
+        - Do not put each metadata field on a separate line.
+        - Leave a blank line between the image identifier, Morphology, and
+          Metadata sections.
+        - Do not add any additional sections or formatting.
+
+        MORPHOLOGY:
+
+        Briefly describe the visible structures, shapes, textures, and spatial
+        organization using only the morphology description provided in the
+        retrieved context.
+
+        METADATA:
+
+        Report the following metadata fields, in this exact order:
+
+        Category
+        Detector
+        Pixel size
+        Magnification
+        Accelerating voltage
+        Working distance
+        Brightness
+        Contrast
+        Scan Speed
+        Frame Average
+        Line Average
+
+        Include every field when it is available in the retrieved context.
+        If a field is not available, write "Not available".
+
+        Do not omit a metadata field because you consider it irrelevant to
+        the query.
+
+        Do not invent, infer, or estimate metadata.
+
+        Preserve the values and units provided in the retrieved context.
+        Do not modify or normalize them.
+
+        Do not compare candidates with each other and do not state which
+        candidate is better or more relevant.
+
+        Retrieved context is the only source of information. Do not use
+        external knowledge to fill missing information.
         """
     ),
     ChatMessage.from_user(
@@ -1233,6 +1286,70 @@ class QueryEmbedder():
         return {"embedding": response.data[0].embedding}
 
 
+@component
+class MMRReranker():
+    def __init__(self, top_k: int = 5, lambda_: float = 0.8):
+        self.top_k = top_k
+        self.lambda_ = lambda_
+
+    @component.output_types(documents=list[Document])
+    def run(
+        self,
+        query_embedding: list[float],
+        documents: list[Document],
+    ):
+        if not documents:
+            return {"documents": []}
+
+        if len(documents) <= self.top_k:
+            return {"documents": documents}
+
+        # Turn embeddings into NumPy arrays
+        query = np.asarray(query_embedding, dtype=np.float32)
+        embeddings = np.asarray([document.embedding for document in documents], dtype=np.float32)
+
+        # Normalize embeddings for cosine similarity
+        query = query / np.linalg.norm(query)
+        embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+        # Similarity between query and each candidate -> array with [sim(query, A), sim(query, B), ...]
+        query_similarities = embeddings @ query
+
+        # Pairwise candidate similarities -> 50x50 matrix with how similar every candidate is to every other candidate
+        candidate_similarities = embeddings @ embeddings.T
+
+        selected = [] # list of selected images' indexes
+        remaining = list(range(len(documents))) # list of indexes [0, 1, 2, ...]
+
+        # First result: index of the most similar image to query
+        first = int(np.argmax(query_similarities))
+        selected.append(first) # [0]
+        remaining.remove(first)
+
+        while len(selected) < self.top_k and remaining:
+            mmr_scores = []
+
+            for candidate in remaining:
+                # Take the relevance to the query for each candidate
+                relevance = query_similarities[candidate]
+
+                # Compute the max similarity between already selected images and each candidate
+                redundancy = np.max(candidate_similarities[candidate, selected])
+
+                # Compute MMR for each candidate and add the tuple [mrr_score, candidate_index] to the list
+                mmr = self.lambda_ * relevance - (1 - self.lambda_) * redundancy
+                mmr_scores.append((mmr, candidate))
+
+            _, best_candidate = max(mmr_scores)
+
+            selected.append(best_candidate)
+            remaining.remove(best_candidate)
+
+        return {
+            "documents": [documents[i] for i in selected]
+        }
+
+
 def render_image_gallery(documents) -> str:
     """
     Render the retrieved candidates as inline images so the researcher can
@@ -1259,10 +1376,13 @@ class PipelineWrapper(BasePipelineWrapper):
 
         self.retrieval_pipeline.add_component("query_embedder", QueryEmbedder(model=EMBED_MODEL_ID, api_base_url=API_URL, api_key=VLLM_API_KEY))
         self.retrieval_pipeline.add_component("metadata_extractor", QueryMetadataExtractor())
-        self.retrieval_pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=5))
+        self.retrieval_pipeline.add_component("retriever", QdrantEmbeddingRetriever(document_store=document_store, top_k=MMR_CANDIDATES, return_embedding=True))
+        self.retrieval_pipeline.add_component("mmr", MMRReranker(top_k=TOP_K, lambda_=0.8))
 
         self.retrieval_pipeline.connect("metadata_extractor.filters", "retriever.filters")
         self.retrieval_pipeline.connect("query_embedder.embedding", "retriever")
+        self.retrieval_pipeline.connect("query_embedder.embedding", "mmr.query_embedding")
+        self.retrieval_pipeline.connect("retriever.documents", "mmr.documents")
 
         # __________ GENERATION PIPELINE __________
         self.generation_pipeline = Pipeline()
@@ -1321,7 +1441,8 @@ class PipelineWrapper(BasePipelineWrapper):
 
         response = self.retrieval_pipeline.run(retrieval_run_args)
 
-        documents = (response.get("retriever", {}).get("documents", []))
+        # documents = (response.get("retriever", {}).get("documents", []))
+        documents = (response.get("mmr", {}).get("documents", []))
 
         log.info(f"Retrieved {len(documents)} documents for query: '{question}'")
 
