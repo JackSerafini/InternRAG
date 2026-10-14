@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: rag-retrieval
-          image: jackserafini/rag-retrieval:v6
+          image: jackserafini/rag-retrieval:test
+          imagePullPolicy: Always
 
           ports:
             - containerPort: 1416
@@ -39,10 +40,10 @@ spec:
           resources:
             requests:
               cpu: 1
-              memory: 2Gi
+              memory: 1Gi
             limits:
-              cpu: 1
-              memory: 2Gi
+              cpu: 2
+              memory: 8Gi
           
           readinessProbe:
             httpGet:
