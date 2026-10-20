@@ -1,9 +1,13 @@
 # this file was mainly created for Docker, but it should work for local dev as well (probably no need for hayhooks)
 
 ipykernel
-vllm
+matplotlib
+# vllm
 hayhooks
 vllm-haystack
 qdrant-haystack
+bm25s
+scikit-image
+scikit-learn
 docling-haystack
 deepeval-haystack
