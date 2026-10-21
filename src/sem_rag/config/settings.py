@@ -41,6 +41,20 @@ class SEMDataset:
     THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop (tune down to (128,128) if payload size becomes an issue)
 
 
+class LAMEDataset:
+    SOURCE_DIR = DATA_DIR / "LAME"
+    LAME_DIR = DATA_DIR / "LAME_filtered"
+
+    CROPS = LAME_DIR / "crops"
+    META = LAME_DIR / "hdr"
+
+    EMBEDDINGS_QWEN = LAME_DIR / "embeddings_QWEN"
+
+    DESCRIPTIONS = LAME_DIR / "image_descriptions.json"
+
+    THUMBNAIL_SIZE = (224, 224) # downsized preview for chat rendering, not a crop (tune down to (128,128) if payload size becomes an issue)
+
+
 class TestSem:
     CROPS = DATA_DIR / "subset_test_1000/crops"
     JSON = DATA_DIR / "subset_test_1000/json"
@@ -71,6 +85,7 @@ class Qdrant:
     URL = "http://db-rag.dev.rd.areasciencepark.it"
 
     COLLECTION_QWEN = "SEM_qwen"
+    COLLECTION_LAME = "LAME_qwen"
     OLD_COLLECTION_QWEN = "Test_OLDSEM_qwen"
     OLD_COLLECTION_DINO = "Test_OLDSEM_dino"
     COLLECTION_CLIP = "SEM_clip"

@@ -1,16 +1,15 @@
-import os
 import json
-import glob
+from pathlib import Path
 
 from openai import OpenAI
 
-from sem_rag.config.settings import VLLM, SEMDataset
+from sem_rag.config.settings import VLLM, SEMDataset, LAMEDataset
 from sem_rag.image.encoding import encode_image
 
 client = OpenAI(base_url=VLLM.API_URL, api_key=VLLM.API_KEY)
 
 
-def _generate_image_description(image_path: str) -> str:
+def _generate_image_description(image_path: Path) -> str:
     """
     Generate a scientific description of a SEM image using Gemma 4.
 
@@ -21,9 +20,8 @@ def _generate_image_description(image_path: str) -> str:
         image_path: Path to the NumPy file containing the SEM image.
 
     Returns:
-        A concise scientific description of the image, focusing on
-        visible morphology, structure, particle shape, size, texture,
-        and patterns.
+        A concise scientific description of the image, focusing on visible 
+        morphology, structure, particle shape, size, texture, and patterns.
     """
     image_url = encode_image(image_path)
 
@@ -44,16 +42,11 @@ def _generate_image_description(image_path: str) -> str:
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "Describe this SEM image. "
-                            "Provide a concise scientific description."
-                        )
+                        "text": "Describe this SEM image. Provide a concise scientific description."
                     },
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": image_url
-                        }
+                        "image_url": {"url": image_url}
                     }
                 ]
             }
@@ -64,10 +57,9 @@ def _generate_image_description(image_path: str) -> str:
     return response.choices[0].message.content
 
 
-def load_descriptions(descriptions_path: str) -> dict[str, str]:
+def load_descriptions(descriptions_path: str | Path) -> dict[str, str]:
     """
     Load cached image descriptions from a JSON file.
-
     If the file does not exist, an empty dictionary is returned.
 
     Args:
@@ -78,15 +70,18 @@ def load_descriptions(descriptions_path: str) -> dict[str, str]:
         A dictionary mapping image IDs, stored as strings, to their
         corresponding descriptions.
     """
-    if os.path.exists(descriptions_path):
-        with open(descriptions_path, "r") as file:
+    descriptions_path = Path(descriptions_path)
+
+    if descriptions_path.exists():
+        with descriptions_path.open("r", encoding="utf-8") as file:
             return json.load(file)
+    
     return {}
 
 
 def _save_descriptions(
         descriptions: dict[str, str],
-        descriptions_path: str
+        descriptions_path: Path
 ) -> None:
     """
     Save cached image descriptions to a JSON file.
@@ -96,15 +91,11 @@ def _save_descriptions(
         descriptions_path: Path to the JSON file where the descriptions
             should be stored.
     """
-    with open(descriptions_path, "w") as file:
-        json.dump(
-            descriptions,
-            file,
-            indent=2
-        )
+    with descriptions_path.open("w", encoding="utf-8") as file:
+        json.dump(descriptions, file, indent=2)
 
 
-def get_crop_path(image_id: int) -> str:
+def get_crop_path(image_id: int) -> Path:
     """
     Find the NumPy crop corresponding to a SEM image ID.
 
@@ -117,9 +108,8 @@ def get_crop_path(image_id: int) -> str:
     Returns:
         The path to the unique crop associated with the image ID.
     """
-    pattern = os.path.join(SEMDataset.CROPS, f"{image_id}_*.npy")
-
-    matches = glob.glob(pattern)
+    pattern = f"{image_id}_*.npy"
+    matches = list(SEMDataset.CROPS.glob(pattern))
 
     if not matches:
         raise FileNotFoundError(f"No crop found for image ID {image_id}")
@@ -130,39 +120,68 @@ def get_crop_path(image_id: int) -> str:
     return matches[0]
 
 
-def get_description(
-        image_id: int, 
-        descriptions: dict[str, str]
+def _get_description(
+        crop_path: Path,
+        key: str,
+        descriptions: dict[str, str],
+        descriptions_path: Path
 ) -> str:
     """
-    Retrieve or generate the description for a SEM image.
+    Retrieve or generate an image description.
 
-    If a description already exists in the provided cache, it is returned
-    without making a request to the VLM. Otherwise, the corresponding
-    image crop is located, described using Gemma 4, added to the cache,
-    and persisted to disk.
+    If the description is already cached, it is returned without making
+    a request to the VLM. Otherwise, the image at `crop_path` is
+    described using Gemma 4, and the result is added to the cache and
+    persisted to `descriptions_path`.
 
-    The provided ``descriptions`` dictionary is modified in place when
+    The provided `descriptions` dictionary is modified in place when
     a new description is generated.
 
     Args:
-        image_id: SEM image identifier.
-        descriptions: In-memory cache mapping image IDs to descriptions.
+        crop_path: Path to the image crop to describe.
+        key: Identifier used to look up and store the description.
+        descriptions: In-memory cache mapping image identifiers to
+            descriptions.
+        descriptions_path: Path to the JSON file used to persist the cache.
 
     Returns:
         The cached or newly generated image description.
     """
-    key = str(image_id)
-
     if key in descriptions:
         return descriptions[key]
 
-    crop_path = get_crop_path(image_id)
-    print(f"Generating description for image {image_id}")
-
+    print(f"Generating description for image {key}")
     description = _generate_image_description(crop_path)
-    
+
     descriptions[key] = description
-    _save_descriptions(descriptions, SEMDataset.DESCRIPTIONS)
+    _save_descriptions(descriptions, descriptions_path)
 
     return description
+
+
+def get_sem_description(
+        image_id: int,
+        descriptions: dict[str, str]
+) -> str:
+    """Retrieve or generate the description for a SEM dataset image."""
+    return _get_description(
+        crop_path=get_crop_path(image_id),
+        key=str(image_id),
+        descriptions=descriptions,
+        descriptions_path=SEMDataset.DESCRIPTIONS
+    )
+
+
+def get_lame_description(
+        crop_path: str | Path, 
+        descriptions: dict[str, str]
+) -> str:
+    """Retrieve or generate the description for a LAME dataset crop."""
+    crop_path = Path(crop_path)
+
+    return _get_description(
+        crop_path=crop_path,
+        key=crop_path.stem,
+        descriptions=descriptions,
+        descriptions_path=LAMEDataset.DESCRIPTIONS
+    )
