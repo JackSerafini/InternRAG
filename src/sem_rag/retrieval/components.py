@@ -72,7 +72,11 @@ class QueryMetadataExtractor:
                 model=model,
                 api_key=Secret.from_token(api_key),
                 api_base_url=api_base_url,
-                generation_kwargs={"response_format": {"type": "json_object"}},
+                generation_kwargs={
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.0,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                },
             )
         )
         self.pipeline.connect("builder", "llm")
@@ -199,7 +203,7 @@ class QueryMetadataExtractor:
 
             return {"filters": {"operator": "AND", "conditions": conditions}}
 
-        except Exception as exc:
+        except Exception:
             return {"filters": None}
 
 
