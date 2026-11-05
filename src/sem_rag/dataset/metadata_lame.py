@@ -39,6 +39,16 @@ FIELD_UNITS = {
 }
 
 
+def normalize_detector(value: str | None) -> str | None:
+    """Map all transmitted-electron channels (TE BF, TE DF, TE DF #2, TE HADF) to STEM."""
+    if value is None:
+        return None
+    if value.split()[0] == "TE":
+        return "STEM"
+    
+    return value
+
+
 def load_hdr_metadata(hdr_path: str | Path) -> dict:
     """
     Load and normalize the relevant metadata from a SEM .hdr file.
@@ -84,5 +94,7 @@ def load_hdr_metadata(hdr_path: str | Path) -> dict:
         value = parser.get(section, key, fallback=None)
 
         metadata[field] = value.strip() if value and value.strip() else None
+
+    metadata["detector"] = normalize_detector(metadata["detector"])
 
     return metadata

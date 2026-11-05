@@ -241,9 +241,7 @@ METADATA_SCHEMA = {
         "type": "categorical",
         "description": (
             "Detector configuration recorded in the SEM acquisition metadata. "
-            "A value may identify one detector or a comma-separated combination "
-            "of detectors. The complete stored value is preserved for exact "
-            "metadata filtering."
+            "The complete stored value is preserved for exact metadata filtering."
         ),
         "values": {
             "Axial": {
@@ -277,39 +275,6 @@ METADATA_SCHEMA = {
                     "Everhart Thornley detector",
                 ],
             },
-            "E-T, Axial": {
-                "description": "Combined detector configuration recorded as E-T, Axial.",
-                "dictionary_terms": [
-                    "E-T, Axial",
-                ],
-            },
-            "E-T, LE BSE": {
-                "description": "Combined detector configuration recorded as E-T, LE BSE.",
-                "dictionary_terms": [
-                    "E-T, LE BSE",
-                ],
-            },
-            "E-T, LE BSE, Axial (BSE)": {
-                "description": (
-                    "Combined detector configuration recorded as "
-                    "E-T, LE BSE, Axial (BSE)."
-                ),
-                "dictionary_terms": [
-                    "E-T, LE BSE, Axial (BSE)",
-                ],
-            },
-            "E-T, MD": {
-                "description": "Combined detector configuration recorded as E-T, MD.",
-                "dictionary_terms": [
-                    "E-T, MD",
-                ],
-            },
-            "E-T, MD, Axial": {
-                "description": "Combined detector configuration recorded as E-T, MD, Axial.",
-                "dictionary_terms": [
-                    "E-T, MD, Axial",
-                ],
-            },
             "LE BSE": {
                 "description": "Low-energy backscattered-electron detector configuration.",
                 "dictionary_terms": [
@@ -327,35 +292,21 @@ METADATA_SCHEMA = {
                     "MD detector",
                 ],
             },
-            "TE BF": {
-                "description": "Detector configuration recorded as TE BF.",
+            "STEM": {
+                "description": "Scanning transmission electron detector "
+                "(transmitted-electron signal: bright field, dark field or "
+                "high-angle annular dark field).",
                 "dictionary_terms": [
+                    "STEM",
+                    "STEM detector",
+                    "transmitted electrons",
+                    "TE",
                     "TE BF",
-                    "TE-BF",
-                    "TEBF",
-                ],
-            },
-            "TE DF": {
-                "description": "Detector configuration recorded as TE DF.",
-                "dictionary_terms": [
                     "TE DF",
-                    "TE-DF",
-                    "TEDF",
-                ],
-            },
-            "TE DF #2": {
-                "description": "Detector configuration recorded as TE DF #2.",
-                "dictionary_terms": [
-                    "TE DF #2",
-                    "TE-DF #2",
-                ],
-            },
-            "TE HADF": {
-                "description": "Detector configuration recorded as TE HADF.",
-                "dictionary_terms": [
                     "TE HADF",
-                    "TE-HADF",
-                    "TEHADF",
+                    "bright field",
+                    "dark field",
+                    "HAADF"
                 ],
             },
         },
@@ -521,7 +472,7 @@ class QueryMetadataExtractor:
                     },
                     "detector": {
                         "operator": "==",
-                        "value": "TE BF"
+                        "value": "STEM"
                     }
                 }
 
@@ -638,36 +589,17 @@ class QueryMetadataExtractor:
                     }
                 }
 
-                If the user asks for images acquired using the TE BF detector,
+                If the user asks for images acquired using the STEM detector,
                 return:
 
                 {
                     "detector": {
                         "operator": "==",
-                        "value": "TE BF"
+                        "value": "STEM"
                     }
                 }
 
                 IMPORTANT: CATEGORICAL VALUES MUST BE PRESERVED AS COMPLETE STRINGS.
-
-                Some detector values contain spaces, punctuation, or multiple
-                comma-separated detector labels. Examples include:
-                - "TE BF"
-                - "LE BSE"
-                - "Axial (BSE)"
-                - "E-T, MD"
-                - "E-T, Axial"
-                - "E-T, LE BSE, Axial (BSE)"
-
-                Treat every complete value listed in the schema as one categorical
-                value. Never split a canonical value on whitespace or commas.
-                Never shorten a value to its first word or silently reorder its
-                components.
-
-                A request for one detector label does not automatically mean that
-                a combined detector configuration should be selected. Return the
-                exact canonical configuration only when the user's wording
-                identifies that configuration. Do not infer component matching.
 
                 If the wording cannot be mapped confidently to an allowed
                 categorical value, omit that constraint rather than inventing
@@ -684,7 +616,7 @@ class QueryMetadataExtractor:
                 Example query:
 
                 "Find images acquired at around 5 kV in wide-field mode using
-                the TE BF detector."
+                the STEM detector."
 
                 Output:
 
@@ -699,7 +631,7 @@ class QueryMetadataExtractor:
                     },
                     "detector": {
                         "operator": "==",
-                        "value": "TE BF"
+                        "value": "STEM"
                     }
                 }
 
@@ -769,7 +701,11 @@ class QueryMetadataExtractor:
                 model=GENERATION_MODEL_ID,
                 api_key=get_vllm_secret(),
                 api_base_url=API_URL,
-                generation_kwargs={"response_format": {"type": "json_object"}},
+                generation_kwargs={
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.0,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                },
             )
         )
         self.pipeline.connect("builder", "llm")
@@ -822,16 +758,8 @@ class QueryMetadataExtractor:
             return {
                 "operator": "AND",
                 "conditions": [
-                    {
-                        "field": f"meta.{field}",
-                        "operator": ">=",
-                        "value": low,
-                    },
-                    {
-                        "field": f"meta.{field}",
-                        "operator": "<=",
-                        "value": high,
-                    },
+                    {"field": f"meta.{field}", "operator": ">=", "value": low},
+                    {"field": f"meta.{field}", "operator": "<=", "value": high},
                 ],
             }
 
@@ -846,7 +774,6 @@ class QueryMetadataExtractor:
             filter_config = schema.get("filter", {})
 
             tolerance = filter_config.get("tolerance", 0.10)
-            
             tolerance_type = filter_config.get("tolerance_type", "relative")
 
             delta = (abs(number) * tolerance if tolerance_type == "relative" else tolerance)
@@ -854,16 +781,8 @@ class QueryMetadataExtractor:
             return {
                 "operator": "AND",
                 "conditions": [
-                    {
-                        "field": f"meta.{field}",
-                        "operator": ">=",
-                        "value": number - delta,
-                    },
-                    {
-                        "field": f"meta.{field}",
-                        "operator": "<=",
-                        "value": number + delta,
-                    },
+                    {"field": f"meta.{field}", "operator": ">=", "value": number - delta},
+                    {"field": f"meta.{field}", "operator": "<=", "value": number + delta},
                 ],
             }
 

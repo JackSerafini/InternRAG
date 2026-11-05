@@ -41,6 +41,10 @@ def load_all_metadata(folder_path: str | Path) -> pd.DataFrame:
         })
 
     df = pd.DataFrame(all_rows)
+
+    multi = df["detector"].str.contains(",", na=False)
+    df = df[~multi].reset_index(drop=True)
+    
     print(f"Loaded metadata for {len(df)} images.")
 
     return df
