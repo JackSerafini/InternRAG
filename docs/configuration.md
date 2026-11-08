@@ -136,7 +136,7 @@ The `Qdrant` configuration class contains the settings for the vector database.
 | `COLLECTION_CLIP`     | `SEM_clip` | SEM dataset, CLIP embeddings (evaluation baseline) |
 | `OLD_COLLECTION_QWEN` | `Test_OLDSEM_qwen` | Old test subset, Qwen |
 | `OLD_COLLECTION_DINO` | `Test_OLDSEM_dino` | Old test subset, DINO |
-| `COLLECTION_TEST`     | `Test` | Generic documents of the archived prototype / `RAG-Test` |
+| `COLLECTION_TEST`     | `Test` | Generic documents of the archived prototype / `archive/initial_rag/` |
 | `EMBEDDING_DIM_QWEN`  | `4096` | |
 | `EMBEDDING_DIM_DINO`  | `768`  | |
 | `EMBEDDING_DIM_CLIP`  | `512`  | |

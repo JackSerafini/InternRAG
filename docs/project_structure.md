@@ -26,7 +26,7 @@ The repository is divided into different components according to their purpose:
 
 # archive/
 
-`archive/initial_rag/` contains the first generic document-RAG prototype: the Docling-based indexing wrapper, the upload web UI, their Dockerfiles and Kubernetes manifests, and early notebooks. It is not part of the current system.
+`archive/initial_rag/` contains the first generic document-RAG prototype: the Docling-based indexing wrapper and the `RAG-Test` retrieval wrapper, the upload web UI, their Dockerfiles and Kubernetes manifests, and early notebooks. It is not part of the current system.
 
 # data/
 
@@ -73,7 +73,6 @@ Each subdirectory corresponds to a different pipeline implementation:
 pipeline_wrappers/
 ├── RAG-Qwen/   # SEM dataset (collection SEM_qwen)
 ├── RAG-LAME/   # LAME dataset (collection LAME_qwen)
-└── RAG-Test/   # early generic RAG on the Test collection (not included in the Docker image)
 ```
 
 Each wrapper is self-contained (it does not import `sem_rag`), because the Docker image does not install the package. The reusable versions of its components live in `src/sem_rag/retrieval/` and must be kept in sync by hand.

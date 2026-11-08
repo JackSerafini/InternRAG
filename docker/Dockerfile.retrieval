@@ -6,7 +6,6 @@ RUN pip install --no-cache-dir --default-timeout=1200 hayhooks vllm-haystack qdr
 # --default-timeout=1200 in case it doesn't download packages fast enough
 
 COPY render/app.py .
-# COPY pipeline_wrappers/RAG-Test ./pipeline_wrappers/RAG-Test
 COPY pipeline_wrappers/RAG-Qwen ./pipeline_wrappers/RAG-Qwen
 COPY pipeline_wrappers/RAG-LAME ./pipeline_wrappers/RAG-LAME
 
