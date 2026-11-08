@@ -259,12 +259,6 @@ METADATA_SCHEMA = {
                     "Axial backscattered electron detector",
                 ],
             },
-            "Axial, MD, E-T": {
-                "description": "Combined detector configuration recorded as Axial, MD, E-T.",
-                "dictionary_terms": [
-                    "Axial, MD, E-T",
-                ],
-            },
             "E-T": {
                 "description": "E-T detector configuration.",
                 "dictionary_terms": [
