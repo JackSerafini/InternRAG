@@ -1,6 +1,7 @@
 # Configuration
 
 InternRAG keeps project-wide configuration in:
+
 ```text
 src/sem_rag/config/settings.py
 ```
@@ -19,22 +20,30 @@ Environment-specific secrets, such as API keys, are loaded from environment vari
 InternRAG uses `python-dotenv` to load environment variables from a `.env` file.  
 The following variables are currently used:
 
-| Variable       | Description                                       |
-| -------------- | ------------------------------------------------- |
-| `HF_TOKEN`     | Hugging Face authentication token                 |
-| `VLLM_API_KEY` | API key used to authenticate with the vLLM server |
-| `VLLM_API_URL` | Base URL of the vLLM API                          |
+| Variable       | Used by | Description |
+| -------------- | ------- | ----------- |
+| `HF_TOKEN`     | `settings.HF_TOKEN` | Hugging Face token (model downloads, e.g. CLIP) |
+| `VLLM_API_KEY` | `settings.VLLM.API_KEY`, all wrappers | Bearer token sent to the vLLM gateway (see *vLLM authentication* below) |
+| `VLLM_API_URL` | `settings.VLLM.API_URL`, all wrappers | Base URL of the OpenAI-compatible vLLM API. Default: `https://orfeo-llm.areasciencepark.it/vllm/v1` |
+| `QDRANT_URL`   | pipeline wrappers, `render/app.py` (in-cluster only) | Qdrant URL inside the cluster. Default: `http://qdrant.orfeo-rag.svc.cluster.local:6333` |
+| `THUMBNAIL_BASE_URL` | pipeline wrappers | Public base URL of the thumbnail endpoint. Default: `https://llm-rag.dev.rd.areasciencepark.it/rag-images` |
 
-`VLLM_API_URL` has a default value pointing to the project's remote vLLM server. It can be overridden through the environment when using a different deployment.
-
-Sensitive values such as `HF_TOKEN` and `VLLM_API_KEY` should **not** be committed to the repository.
-
-A local `.env` file can be used during development:
+Local `.env` example:
 ```text
-HF_TOKEN=your_huggingface_token
-VLLM_API_KEY=your_api_key
-VLLM_API_URL=http://localhost:8000/v1
+HF_TOKEN=<your Hugging Face token>
+VLLM_API_KEY=<token, see below>
 ```
+
+## vLLM authentication
+
+The vLLM gateway does not accept a static API key. It expects a JWT issued  with the `request_token.bash` script. It must be **sourced**, not executed, so that it can export `$JWT` into the current shell:
+
+```bash
+source request_token.bash
+echo $JWT
+```
+
+Then you can copy and paste the content inside your `.env` file.
 
 # Project Paths
 
@@ -65,89 +74,82 @@ The `VLLM` configuration class contains settings related to the models served th
 
 | Setting           | Value                          | Description                                |
 | ----------------- | ------------------------------ | ------------------------------------------ |
-| `API_KEY`         | Environment variable           | Authentication for the vLLM API            |
-| `API_URL`         | Environment variable / default | Base URL of the vLLM OpenAI-compatible API |
-| `GEMMA_MODEL`     | `google/gemma-4-26B-A4B-it`    | Gemma model used by the application        |
-| `GPTOSS_MODEL`    | `openai/gpt-oss-120b`          | GPT-OSS model used by the application      |
+| `API_KEY`         | `VLLM_API_KEY`                 | Bearer token for the vLLM gateway          |
+| `API_URL`         | `VLLM_API_URL` / default       | Base URL of the vLLM OpenAI-compatible API |
+| `GEMMA_MODEL`     | `google/gemma-4-26B-A4B-it`    | Generation and metadata-extraction model   |
+| `QWEN36_MODEL`    | `Qwen/Qwen3.6-35B-A3B-FP8`     | Alternative extractor (metadata-extraction evaluation) |
+| `QWEN38_MODEL`    | `Qwen/Qwen3.8-27B-FP8`         | Alternative extractor (metadata-extraction evaluation) |
 | `EMBEDDING_MODEL` | `Qwen/Qwen3-VL-Embedding-8B`   | Multimodal embedding model                 |
 
-The model names are kept in configuration so that model selection can be changed without modifying the pipeline implementation.
+The pipeline wrappers do **not** read `settings.py`; they hard-code their own model IDs and collection names at the top of each `pipeline_wrapper.py`.
 
-# Test SEM Dataset
+# Datasets
 
-The `TestSem` configuration class contains paths and parameters associated with the current test dataset.  
-The dataset is located under `data/subset_test_1000/`.  
-Its relevant subdirectories and files are:
+## SEM dataset (`SEMDataset`)
 
-| Setting           | Path                      | Description                         |
-| ----------------- | ------------------------- | ----------------------------------- |
-| `CROPS`           | `crops/`                  | SEM image crops                     |
-| `JSON`            | `json/`                   | Metadata associated with the images |
-| `EMBEDDINGS_DINO` | `embeddings/`             | DINO embeddings                     |
-| `EMBEDDINGS_QWEN` | `embeddings_QWEN/`        | Qwen embeddings                     |
-| `DESCRIPTIONS`    | `image_descriptions.json` | Generated image descriptions        |
+Located under `data/SEM/` (≈14k images, annotated with 10 morphology categories by Aversa et al.).
 
-The dataset-specific configuration is currently named `TestSem` because these paths correspond to the test dataset used during development and evaluation.
+| Setting                | Path | Description |
+| ---------------------- | ---- | ----------- |
+| `CROPS`                | `crops/` | Image crops as `.npy`, named `<SEMImageID>_*.npy` |
+| `JSON`                 | `json/` | Per-image metadata JSON |
+| `EMBEDDINGS_QWEN`      | `embeddings_QWEN/` | Qwen3-VL embeddings (`<SEMImageID>.pt`) |
+| `EMBEDDINGS_CLIP`      | `embeddings_CLIP/` | CLIP embeddings (baseline) |
+| `EMBEDDINGS_DINO`      | `embeddings_DINOv3/` | DINOv3 embeddings (experiments) |
+| `NUMERICAL_SETTINGS`   | `SEM_RAG_numeric_fields_dictionary.csv` | Canonical numeric field → JSON keys (in priority order) |
+| `CATEGORICAL_SETTINGS` | `SEM_RAG_categorical_fields_dictionary.csv` | Canonical categorical field → JSON keys |
+| `CATEGORIES`           | `filtered_categories.csv` | `SEMImageID` → human-assigned category |
+| `DESCRIPTIONS`         | `image_descriptions.json` | Generated visual descriptions |
 
-### Thumbnail Configuration
+Canonical fields stored in Qdrant: `pixel_size_nm`, `magnification_x`, `accelerating_voltage_kv`, `working_distance_mm`, `brightness_percent`, `contrast_percent`, `scan_speed_setting`, `frame_average_count`, `line_average_count` (numeric), `category`, `detector` (categorical).
 
-`THUMBNAIL_SIZE` defines the resolution used when generating image previews for chat rendering:
+## LAME dataset (`LAMEDataset`)
 
-```python
-THUMBNAIL_SIZE = (224, 224)
-```
+The raw images are in `data/LAME/` (`SOURCE_DIR`). `notebooks/lame_images.ipynb` keeps only the images that have an `.hdr` metadata file and are larger than 512×512. It crops them, converts them to grayscale and writes them to `data/LAME_filtered/` (`LAME_DIR`):
 
-This does not crop the original image. It creates a smaller preview while preserving the full field of view.  
-If the size of the data sent to the chat interface becomes an issue, the resolution can be reduced.
+| Setting           | Path | Description |
+| ----------------- | ---- | ----------- |
+| `CROPS`           | `crops/` | `.npy` crops named `<image_id>.npy` |
+| `META`            | `hdr/` | `.hdr` metadata files (same stem) |
+| `EMBEDDINGS_QWEN` | `embeddings_QWEN/` | Qwen3-VL embeddings |
+| `DESCRIPTIONS`    | `image_descriptions.json` | Generated visual descriptions |
 
-### SEM Metadata
+`image_id` is a string (the file stem). Canonical fields: `magnification_x`, `accelerating_voltage_kv`, `emission_current_µa`, `dwell_time_µs`, `working_distance_mm` (numeric, converted to these units), `scan_mode`, `detector` (categorical). See [`docs/indexing.md`](indexing.md) for the detector normalisation.
 
-`SETTINGS_KEYS` defines the SEM acquisition parameters that are extracted and made available to the retrieval system.  
-Currently, the fields are:
+## Legacy test subset (`TestSem`)
 
-```text
-AP_WD
-AP_FREE_WD
-AP_BEAM_TIME
-AP_STAGE_LOW_Z
-AP_STAGE_CENTRE_X
-AP_C3
-AP_EHT_CAL_30KV
-AP_EHT_CAL_10KV
-AP_EHT_CAL_100
-AP_EHT_CAL_24KV
-AP_MINMAG
-```
+`data/subset_test_1000/` with the 11 `AP_*` fields in `SETTINGS_KEYS`. Only `notebooks/test_data.ipynb` uses it. It is kept for reference.
 
-These parameters represent microscope and acquisition settings associated with each SEM image.
+## Thumbnails
 
-The fields are used when constructing document metadata and when processing metadata-related query constraints.
-
-The exact interpretation and filtering behavior of these fields is defined by the metadata extraction and retrieval logic rather than by the field list itself.
+All dataset classes define `THUMBNAIL_SIZE = (224, 224)`: the size of the downscaled (not cropped) preview stored in the Qdrant payload as `thumb_b64` and served to the chat. Reduce it (e.g. to 128×128) if payload size becomes an issue.
 
 # Qdrant
 
 The `Qdrant` configuration class contains the settings for the vector database.
 
-| Setting              | Value                   | Description                           |
-| -------------------- | ----------------------- | ------------------------------------- |
-| `URL`                | `http://localhost:6333` | Qdrant server URL                     |
-| `COLLECTION_QWEN`    | `SEMImages_qwen`        | Collection containing Qwen embeddings |
-| `COLLECTION_DINO`    | `SEMImages_dino`        | Collection containing DINO embeddings |
-| `COLLECTION_TEST`    | `Test`                  | Test collection                       |
-| `EMBEDDING_DIM_QWEN` | `4096`                  | Dimensionality of Qwen embeddings     |
-| `EMBEDDING_DIM_DINO` | `768`                   | Dimensionality of DINO embeddings     |
+| Setting               | Value | Description |
+| --------------------- | ----- | ----------- |
+| `URL`                 | `http://db-rag.dev.rd.areasciencepark.it` | Qdrant exposed through the cluster ingress; clients connect on port 80 (`storage/qdrant.py`) |
+| `COLLECTION_QWEN`     | `SEM_qwen` | SEM dataset, Qwen3-VL embeddings |
+| `COLLECTION_LAME`     | `LAME_qwen` | LAME dataset, Qwen3-VL embeddings |
+| `COLLECTION_CLIP`     | `SEM_clip` | SEM dataset, CLIP embeddings (evaluation baseline) |
+| `OLD_COLLECTION_QWEN` | `Test_OLDSEM_qwen` | Old test subset, Qwen |
+| `OLD_COLLECTION_DINO` | `Test_OLDSEM_dino` | Old test subset, DINO |
+| `COLLECTION_TEST`     | `Test` | Generic documents of the archived prototype / `RAG-Test` |
+| `EMBEDDING_DIM_QWEN`  | `4096` | |
+| `EMBEDDING_DIM_DINO`  | `768`  | |
+| `EMBEDDING_DIM_CLIP`  | `512`  | |
 
-Different embedding models are stored in separate Qdrant collections because their vectors belong to different embedding spaces and can have different dimensionalities.  
-For example:
+Scripts and notebooks use `URL` (outside the cluster). The deployed wrappers use the in-cluster `QDRANT_URL` instead.
 
-```text
-Qwen embedding -> SEMImages_qwen -> dimension: 4096
+# Evaluation
 
-DINO embedding -> SEMImages_dino -> dimension: 768
-```
+| Setting      | Path | Description |
+| ------------ | ---- | ----------- |
+| `BM25_DIR`   | `data/bm25_index/` | BM25 index over the SEM image descriptions (`scripts/index_bm25.py`) |
+| `GABOR_FILE` | `data/gabor_features/gabor_features.npz` | Gabor texture features (`scripts/generate_gabor_features.py`) |
 
-The configured embedding dimension must match the dimensionality expected by the corresponding Qdrant collection.
 
 # Changing Configuration
 
@@ -169,6 +171,8 @@ Adding or removing metadata fields may require corresponding changes to:
 * Qdrant payload configuration
 * Retrieval filtering
 * Dataset processing
+* The dataset schema in `src/sem_rag/retrieval/schemas/` **and** the copy embedded in the corresponding `pipeline_wrappers/*/pipeline_wrapper.py`
+* For SEM, the field dictionary CSVs
 
 ### Changing dataset paths
 
