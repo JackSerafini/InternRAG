@@ -4,20 +4,18 @@ This directory contains the Kubernetes configuration used to deploy the InternRA
 The deployment is split into two categories:
 
 * **Helm-based services**, using existing Helm charts:
-
-  * Keycloak
   * Open WebUI
   * Qdrant
 
-* **Custom InternRAG services**, using Docker images built specifically for this project:
+* **Custom InternRAG service**, using a Docker image built for this project:
+  * Retrieval (Hayhooks: `RAG-Qwen`, `RAG-LAME` + thumbnail endpoints)
 
-  * Indexing
-  * Retrieval
-  * Upload
+> Keycloak (`k8s/keycloak/`) was used at the beginning for Open WebUI SSO but is **not currently in use**. The manifests are kept for reference only. The generic indexing/upload services of the first prototype have moved to `archive/initial_rag/k8s/`.
 
 The Kubernetes namespace used by the deployment is `orfeo-rag`.
 
-> NOTE: the `orfeo-rag` namespace is provided by the deployment environment and is not created by this repository.
+> [!NOTE]
+> The `orfeo-rag` namespace is provided by the deployment environment and is not created by this repository.
 
 # Directory Structure
 
@@ -25,23 +23,17 @@ The Kubernetes namespace used by the deployment is `orfeo-rag`.
 k8s/
 ├── README.md
 ├── config.yaml
-├── indexing/
-│   ├── service.yaml
-│   └── values.yaml
-├── keycloak/
-│   ├── ingress.yaml
-│   └── values.yaml
+├── hello_world/        # minimal Deployment/Service/PVC used to test the namespace
+├── keycloak/           # not in use
 ├── net_debug/
 │   └── values.yaml
 ├── open_webui/
 │   ├── ingress.yaml
 │   └── values.yaml
 ├── qdrant/
+│   ├── ingress.yaml
 │   └── values.yaml
-├── retrieval/
-│   ├── service.yaml
-│   └── values.yaml
-└── upload/
+└── retrieval/
     ├── service.yaml
     └── values.yaml
 ```
@@ -65,17 +57,17 @@ The required Helm repositories are:
 
 * qdrant: https://qdrant.github.io/qdrant-helm
 * open-webui: https://helm.openwebui.com/
-* codecentric: https://codecentric.github.io/helm-charts
+<!-- * codecentric: https://codecentric.github.io/helm-charts -->
 
 They can be added with:
 
 ```bash
 helm repo add qdrant https://qdrant.github.io/qdrant-helm
 helm repo add open-webui https://helm.openwebui.com/
-helm repo add codecentric https://codecentric.github.io/helm-charts
 
 helm repo update
 ```
+<!-- helm repo add codecentric https://codecentric.github.io/helm-charts -->
 
 # Shared Configuration
 
@@ -116,17 +108,17 @@ Resource requests and limits must be specified for the containers deployed in th
 resources:
   requests:
     cpu: 1
-    memory: 4Gi
+    memory: 1Gi
   limits:
-    cpu: 1
-    memory: 4Gi
+    cpu: 2
+    memory: 8Gi
 ```
 
 When adding or modifying a deployment, make sure that appropriate resource requests and limits are defined.
 
 # Helm Deployments
 
-Keycloak, Open WebUI, and Qdrant are deployed using existing Helm charts.  
+Qdrant and Open WebUI are deployed using existing Helm charts.  
 Their deployment-specific configuration is stored in the corresponding directories.
 
 ## Qdrant
@@ -150,7 +142,7 @@ kubectl delete pvc -l app.kubernetes.io/instance=qdrant
 
 The Qdrant service is accessed internally by the InternRAG services through `qdrant.orfeo-rag.svc.cluster.local:6333`. This address is configured through `rag-config`.
 
-## Keycloak
+<!-- ## Keycloak
 
 Keycloak provides authentication and identity management for the deployment.
 
@@ -186,7 +178,7 @@ For local access, add the ingress IP to `/etc/hosts`:
 
 ```text
 10.128.18.132    auth.local
-```
+``` -->
 
 ## Open WebUI
 
@@ -206,30 +198,28 @@ helm uninstall open-webui
 kubectl delete pvc -l app.kubernetes.io/instance=open-webui
 ```
 
+Open WebUI is configured with two OpenAI-compatible connections (`openaiBaseApiUrls` in `values.yaml`):
+
+1. `https://orfeo-llm.areasciencepark.it/vllm/v1`: the Orfeo vLLM gateway (plain models)
+2. `http://rag-retrieval.orfeo-rag.svc.cluster.local:1416/v1`: the InternRAG retrieval service (models `RAG-Qwen`, `RAG-LAME`)
+
 ### Ingress
 
-Open WebUI is exposed through `k8s/open_webui/ingress.yaml`.  
-Apply the ingress with:
+`k8s/open_webui/ingress.yaml` exposes Open WebUI at `llm-rag.dev.rd.areasciencepark.it`. On the same host it routes:
+
+| Path | Backend |
+| ---- | ------- |
+| `/` | `open-webui:80` |
+| `/rag-images` | `rag-retrieval:1416` (SEM thumbnails) |
+| `/rag-images-lame` | `rag-retrieval:1416` (LAME thumbnails) |
 
 ```bash
 kubectl apply -f k8s/open_webui/ingress.yaml
 ```
 
-The configured local hostname is:
+The thumbnail routes must stay on the same host, because the image links in the RAG answers point to it.
 
-```text
-chat.local
-```
-
-Add it to `/etc/hosts`:
-
-```text
-10.128.18.132    chat.local
-```
-
-You can then access Open WebUI through http://chat.local.
-
-## Open WebUI Authentication
+<!-- ## Open WebUI Authentication
 
 Open WebUI is configured to use Keycloak for authentication through OpenID Connect (OIDC).  
 The setup follows the [Open WebUI Keycloak SSO documentation](https://docs.openwebui.com/features/authentication-access/auth/sso/keycloak/).
@@ -267,7 +257,7 @@ Create the secret using the *Client Secret* found in the Credentials tab of the 
 kubectl create secret generic open-webui-oidc --from-literal=client-secret='XXX'
 ```
 
-> NOTE: this is currently a simple development setup. A dedicated secret-management solution should be considered for a production deployment.
+> NOTE: this is currently a simple development setup. A dedicated secret-management solution should be considered for a production deployment. -->
 
 # vLLM Credentials
 
@@ -296,7 +286,7 @@ The actual API key should never be committed to the repository.
 # Custom InternRAG Services
 
 The indexing, retrieval, and upload components are developed specifically for InternRAG.  
-Unlike Keycloak, Open WebUI, and Qdrant, they are not deployed through third-party Helm charts. Instead, each service is packaged into a Docker image and deployed using Kubernetes manifests.
+Unlike Open WebUI and Qdrant, they are not deployed through third-party Helm charts. Instead, each service is packaged into a Docker image and deployed using Kubernetes manifests.
 
 The three services are:
 
@@ -319,20 +309,12 @@ Upload
 The retrieval service exposes the InternRAG retrieval pipelines as OpenAI-compatible APIs through [Hayhooks](https://github.com/deepset-ai/hayhooks) so that Open WebUI can interact with them as models.  
 The service currently contains two Haystack pipeline wrappers:
 
-* `RAG-Test`: an early generic RAG pipeline operating on the `Test` Qdrant collection
-* `RAG-Qwen`: the SEM-specific retrieval pipeline operating on the `SEMImages_qwen` collection
+* `RAG-Qwen`: SEM dataset, collection `SEM_qwen`
+* `RAG-LAME`: LAME dataset, collection `LAME_qwen`
 
-The pipeline wrappers are located at:
+(`RAG-Test` exists in `pipeline_wrappers/` but is not included in the image.)
 
-```text
-pipeline_wrappers/
-├── RAG-Test/
-│   └── pipeline_wrapper.py
-└── RAG-Qwen/
-    └── pipeline_wrapper.py
-```
-
-The Docker image is defined by `docker/Dockerfile.retrieval`: it includes both pipeline wrappers as well as `render/app.py`, which creates the Hayhooks application and provides an additional endpoint for retrieving SEM image thumbnails from Qdrant.
+The Docker image is defined by `docker/Dockerfile.retrieval`: it includes the `RAG-Qwen` and `RAG-LAME` wrappers and `render/app.py` (Hayhooks app + `/rag-images` and `/rag-images-lame thumbnail` endpoints), which creates the Hayhooks application and provides an additional endpoint for retrieving SEM image thumbnails from Qdrant.
 
 The container runs Hayhooks through Uvicorn on port `1416`. Hayhooks automatically discovers the pipeline wrappers under the configured pipelines directory.
 
@@ -363,63 +345,28 @@ The retrieval service is then available to other services in the Kubernetes clus
 
 For details about the retrieval pipelines themselves, see [`docs/retrieval.md`](../docs/retrieval.md).
 
-## Indexing and Upload
+## Archived services
 
-The indexing service is an early, generic document-ingestion pipeline developed as a first attempt at building a custom RAG system.  
-It is **not part of the SEM image indexing pipeline** and does not process the SEM dataset used by the current InternRAG retrieval system. In particular, it does not perform SEM-specific operations such as image cropping, image embedding, metadata extraction, or management of the *SEMImages_qwen* and *SEMImages_dino* collections. Instead, the service is designed to ingest common document formats and store their embeddings in a separate Qdrant collection, called *Test*. The indexing pipeline uses *Docling* to convert the uploaded documents into chunks and `Qwen/Qwen3-VL-Embedding-8B` to generate their embeddings. The resulting documents are then written to the *Test* Qdrant collection.
-
-A separate upload service provides a minimal web interface for submitting documents to the indexing pipeline. It forwards uploaded files to the indexing service through its Hayhooks API.
-
-The indexing pipeline is implemented in `pipeline_wrappers/indexing/pipeline_wrapper.py` and its Docker image is defined by `docker/Dockerfile.indexing`. The upload application, on the other hand, is implemented in `upload/main.py` and its Docker image is defined by `docker/Dockerfile.upload`.
-
-The Kubernetes configurations are located at:
-
-```text
-k8s/
-├── indexing
-│   ├── service.yaml
-│   └── values.yaml
-└── upload
-    ├── service.yaml
-    └── values.yaml
-```
-
-Despite the filenames, `values.yaml` are Kubernetes `Deployment` manifests rather than Helm values files.
-
-The indexing service exposes port `1416` and uses the shared `rag-config` ConfigMap. The vLLM API key is obtained from the Kubernetes secret: `vllm-api-key`.  
-To deploy the indexing and upload services:
-
-```bash
-kubectl apply -f k8s/indexing/values.yaml
-kubectl apply -f k8s/indexing/service.yaml
-kubectl apply -f k8s/upload/values.yaml
-kubectl apply -f k8s/upload/service.yaml
-```
-
-To remove them:
-
-```bash
-kubectl delete -f k8s/indexing/
-kubectl delete -f k8s/upload/
-```
-
-> This service is currently retained in the project as an earlier RAG prototype. The current SEM-specific system uses a separate indexing/data preparation workflow because the SEM dataset requires domain-specific processing, including image handling, embeddings, and metadata.
+The generic indexing and upload services of the first prototype are in `archive/initial_rag/k8s/{indexing,upload}/`. They are not deployed.
 
 # Development Utilities
 
 ## Net Debug
 
 The `net_debug` deployment is a utility used to investigate networking and connectivity inside the Kubernetes cluster.  
-Apply it with:
 
 ```bash
 kubectl apply -f k8s/net_debug/values.yaml
+kubectl delete -f k8s/net_debug/values.yaml
 ```
 
-To remove it:
+## Hello World
+
+`k8s/hello_world/` contains a minimal Deployment, Service and PVC used to test access to the namespace and storage:
 
 ```bash
-kubectl delete -f k8s/net_debug/values.yaml
+kubectl apply -f k8s/hello_world/
+kubectl delete -f k8s/hello_world/
 ```
 
 # Checking the Deployment
