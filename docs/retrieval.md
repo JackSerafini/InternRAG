@@ -1,198 +1,259 @@
 # Retrieval Pipeline
 
-The retrieval pipeline is responsible for processing user queries, retrieving relevant SEM samples from Qdrant, and using the retrieved information as context for an LLM.
+The retrieval pipeline processes a user query, retrieves the most relevant images from Qdrant and uses them as context for an LLM, which describes the candidates to the researcher.
 
-The pipeline supports both text-based and image-based queries.
+It is built from [Haystack](https://haystack.deepset.ai/) pipelines wrapped as [Hayhooks](https://github.com/deepset-ai/hayhooks) pipeline wrappers. Each wrapper is exposed as an OpenAI-compatible model and appears in Open WebUI under its directory name.
+
+| Pipeline | Dataset | Collection | Thumbnail endpoint |
+| -------- | ------- | ---------- | ------------------ |
+| `RAG-Qwen` | SEM | `SEM_qwen` | `/rag-images` |
+| `RAG-LAME` | LAME | `LAME_qwen` | `/rag-images-lame` |
+
+Both wrappers have the same architecture. They differ only in the collection, the metadata schema, the answer format and the thumbnail endpoint, so this document describes them together. An earlier generic pipeline, `RAG-Test`, is archived in `archive/initial_rag/`.
 
 ## Overview
 
-The retrieval process can be summarized as:
 ```text
-User Query
-    │
-    ▼
-Query Processing
-    │
-    ├── Text
-    │
-    ├── Image
-    │
-    ▼
-Metadata Extraction
-    │
-    ▼
-Query Embedding
-    │
-    ▼
-Qdrant Retrieval
-    │
-    ▼
-Retrieved SEM Samples
-    │
-    ▼
-Context Construction
-    │
-    ▼
-   LLM
-    │
-    ▼
-Response
+                 User message
+                      │
+        ┌─────────────┴─────────────┐
+        │                           │
+   image (if any)                  text
+    or text only                    │
+        │                           ▼
+        ▼                 QueryMetadataExtractor
+  QueryEmbedder                 (Gemma 4)
+(Qwen3-VL-Embedding)                │
+        │                           ▼
+        │                     Qdrant filters
+        └─────────────┬─────────────┘
+                      ▼
+        QdrantEmbeddingRetriever (top 50)
+                      │
+                      ▼
+                MMRReranker (top 5)
+                      │
+                      ▼
+        ChatPromptBuilder → Gemma 4 → answer
+                      │
+                      ▼
+        answer + "Candidate images" gallery
 ```
 
-The retrieval pipeline is implemented using Haystack and is exposed through pipeline wrappers that can be deployed as independent services.
+**Query embedding and metadata extraction are independent.** Both run on the same user message, and their outputs (a vector and a filter) are combined only at the Qdrant retriever.
 
 ## Query Types
 
-The system can receive queries in different forms.
+The wrapper takes the **last user message** of the OpenAI-style request. It concatenates all of its text parts and collects its `image_url` parts.
 
 ### Text Queries
 
-A text query describes the desired SEM samples using natural language.  
-For example:
 ```text
 Find spherical particles with a working distance of approximately 3 mm.
 ```
 
-The textual query can contain both semantic information and explicit metadata constraints.  
-Currently, the complete textual query is used to generate the query embedding. Therefore, metadata-related information present in the query can also influence semantic retrieval. In parallel, the retrieval pipeline extracts recognized metadata fields from the query and can use them as structured filters during the Qdrant search.  
-This results in a hybrid retrieval process in which metadata can influence retrieval through both the query embedding and explicit metadata filtering.
+The text is used twice:
 
-A future improvement could be to decompose the query into separate semantic and metadata components, using only the semantic component to generate the embedding while representing metadata requirements exclusively as structured filters. This would provide a clearer separation between semantic similarity and metadata-based constraints, but would require reliable query decomposition and careful evaluation.
+1. **Embedding.** The whole text is embedded by `Qwen/Qwen3-VL-Embedding-8B`, so the metadata wording ("3 mm") also influences the vector.
+2. **Metadata extraction.** The same text goes to the `QueryMetadataExtractor`, which turns the explicit constraints into a filter, here `working_distance_mm` between 2.7 and 3.3.
+
+As a result, metadata currently affects retrieval in two ways: through the query embedding and through the filter. A possible improvement is to remove the metadata part of the query before embedding it, so that constraints act only through filters. That would require a reliable query decomposition step and a dedicated evaluation.
 
 ### Image Queries
 
-An image can also be provided as a query.  
-In this case, the image is embedded using the appropriate image embedding model and the resulting vector is used for similarity search.
-
-Text accompanying an image can still contain useful metadata constraints. Therefore, the image is used for the semantic embedding while the textual information can be processed separately for metadata extraction.  
-This separation prevents the textual query from unintentionally influencing the image embedding.
-
-## Metadata Extraction
-
-When the query contains metadata information, the retrieval pipeline extracts the relevant fields before performing the vector search.
-
-The supported metadata fields are defined in the project configuration.
-
-For each recognized field, the extractor determines the corresponding value and retrieval constraint.  
-For example, a query such as:
 ```text
-Find images with a working distance around 3 mm.
+[image] Find images similar to this one, with a working distance around 3 mm.
 ```
 
-can be transformed into a metadata constraint on:
+When the message contains an image:
 
-```text
-AP_WD ≈ 3
-```
+* Only the **first** image is embedded, and the text is **not** included in the embedding
+* The text still goes to the metadata extractor
 
-The exact filtering behavior depends on the configuration of the corresponding metadata field.
-
-Metadata extraction therefore acts as an intermediate step between the user query and the retrieval operation.
+The image therefore drives visual similarity, while the text only contributes metadata filters.
 
 ## Query Embedding
 
-After query processing, the system generates an embedding appropriate for the query type.
+`QueryEmbedder` calls the vLLM `/embeddings` endpoint with `Qwen/Qwen3-VL-Embedding-8B` (4096-d). The call uses a chat-style message with the instruction `"Represent the user's input."`, followed by either the image (as a data URL) or the text. Images in the collections were embedded with the same model, so text and image queries share one embedding space.
 
-For a text query:
+## Metadata Extraction
 
-```text
-Text
- ↓
-Text embedding model
- ↓
-Query vector
-```
+`QueryMetadataExtractor` sends the query and a JSON **metadata schema** to `google/gemma-4-26B-A4B-it` in JSON mode, then validates the answer in Python.
 
-For an image query:
+For every canonical field, the schema lists:
 
-```text
-Image
- ↓
-Image embedding model
- ↓
-Query vector
-```
+* Its type and a scientific description
+* `dictionary_terms`, i.e. aliases the user may use
+* The unit (numeric fields) or allowed values, each with its own aliases (categorical fields)
+* A `filter` entry with the tolerance used for approximate values
 
-> NOTE: since Qwen3-VL-Embedding-8B is multimodal, the same model is used to create both the text and image embeddings.
+This lets the model map "EHT", "beam voltage" or "kV" to `accelerating_voltage_kv`, or "TE bright field" to `detector == "STEM"`, without the user knowing the field names. The model is told to extract only explicitly stated constraints, never to infer metadata from morphology or general knowledge, and to return `{}` when there are none.
 
-The query vector must belong to the same embedding space as the Qdrant collection being searched.  
-For this reason, different embedding models are associated with different Qdrant collections.
+| Pipeline | Numeric fields | Categorical fields |
+| -------- | -------------- | ------------------ |
+| `RAG-Qwen` | `pixel_size_nm`, `magnification_x`, `accelerating_voltage_kv`, `working_distance_mm`, `brightness_percent`, `contrast_percent`, `scan_speed_setting`, `frame_average_count`, `line_average_count` | `category` (`Porous_Sponge`, `Patterned_surface`, `Particles`, `Films_Coated_Surface`, `Powder`, `Tips`, `Nanowires`, `Biological`, `MEMS_devices_and_electrodes`, `Fibres`), `detector` (`InLens`, `SE2`, `HDAsB`) |
+| `RAG-LAME` | `magnification_x`, `accelerating_voltage_kv`, `emission_current_µa`, `dwell_time_µs`, `working_distance_mm` | `scan_mode` (`ANALYSIS`, `UH-RESOLUTION`, `WIDE FIELD`), `detector` (`Axial`, `Axial (BSE)`, `E-T`, `LE BSE`, `MD`, `STEM`) |
 
-## Vector Retrieval
+### Operators
 
-The query embedding is used to perform a similarity search against the selected Qdrant collection.
+The model returns, for each field, an object `{"operator": ..., "value": ...}`:
 
-The retrieval operation can additionally apply metadata filters extracted from the query.
+| Operator | Field type | Filter |
+| -------- | ---------- | ------ |
+| `>=`, `<=` | numeric | the same comparison |
+| `~` | numeric | range `value ± tolerance` (also used for a bare target value such as "at 5 kV") |
+| `between` | numeric | range `[low, high]` |
+| `==` | categorical | exact match on one allowed value |
 
-Conceptually:
+Examples:
 
 ```text
-Query vector
-     │
-     ├───────────────┐
-     │               │
-     ▼               ▼
-Vector similarity   Metadata filters
-     │               │
-     └───────┬───────┘
-             ▼
-       Candidate samples
+"accelerating voltage above 10 kV"     → accelerating_voltage_kv >= 10
+"working distance around 8 mm"         → 7.2 <= working_distance_mm <= 8.8
+"InLens images of nanowires"           → detector == "InLens" AND category == "Nanowires"
 ```
 
-This allows the system to combine semantic similarity with structured SEM acquisition parameters.
+### Tolerance
 
-## Retrieved Context
+The tolerance for `~` is read from each field's `filter` entry (`tolerance`, `tolerance_type`). With `relative`, the range is `value ± value × tolerance`; with any other type, `tolerance` is an absolute amount. **All fields currently use a 10 % relative tolerance.** For small values this is almost an exact match, so some fields may need an absolute tolerance in the future.
 
-The retrieved documents contain the information required to construct the context provided to the LLM.
+### Validation and Filter Construction
 
-The retrieval system is responsible for identifying and returning the relevant candidates. The ranking itself is performed by the retrieval mechanism rather than by the LLM.  
-The retrieved documents can contain:
-* SEM image information
-* metadata
-* generated descriptions
-* embeddings and associated identifiers
+The extractor never queries Qdrant directly. It outputs a Haystack filter that is connected to the `filters` input of `QdrantEmbeddingRetriever`. Each constraint is checked in Python. A constraint is **discarded** when:
 
-The retrieved information is then formatted into the prompt supplied to the language model.
+* Its field is not in the schema
+* Its operator is not supported for that field type
+* Its value is not numeric (numeric fields), or `between` does not have exactly two numeric bounds
+* Its categorical value is not one of the allowed values
 
-## LLM Generation
+Reversed `between` bounds are swapped. The remaining constraints are combined with `AND` on the `meta.<field>` payload keys. If nothing valid remains, or the LLM output cannot be parsed, **no filter is applied** and retrieval is purely by similarity.
 
-After retrieval, the selected documents are provided to an LLM as contextual information.  
-The LLM is instructed to answer based on the retrieved context and to avoid inventing information that is not supported by the available data.
+If the filter is so strict that Qdrant returns nothing, the wrapper skips generation and replies with a fixed message:
 
-Conceptually:
+* `RAG-Qwen`: "I couldn't find any SEM images matching all the requested criteria."
+* `RAG-LAME`: "I couldn't find any SEM images matching the query and its metadata constraints."
+
+## Vector Retrieval and MMR
+
+`QdrantEmbeddingRetriever` (cosine similarity) receives the query embedding and the filters and returns the **top 50** candidates (`MMR_CANDIDATES`) together with their embeddings.
+
+`MMRReranker` reduces them to **5** (`TOP_K`) with Maximal Marginal Relevance, using `λ = 0.8`:
+
+$$ \text{MMR}(d) = \lambda \cdot \text{sim}(\text{query}, d) - (1 - \lambda) \cdot \max_{s \in \text{selected}} \text{sim}(d, s) $$
+
+The first pick is the image most similar to the query. Each following pick balances similarity to the query against similarity to the images already chosen. This avoids returning five near-identical images from the same acquisition session. If 5 or fewer candidates pass the filter, they are returned as they are.
+
+**Ranking is done entirely by the retrieval system.** The LLM never decides which image is more relevant.
+
+## Prompt Construction and Generation
+
+Each retrieved `Document` carries:
+
+* `content`: the metadata line plus the visual description written at indexing time (see [indexing.md](indexing.md));
+* `meta`: the canonical fields, the identifier and the `thumb_b64` thumbnail;
+* `embedding`: used only by the MMR step.
+
+`ChatPromptBuilder` inserts the user query and the `content` of each of the 5 candidates into the prompt, and `VLLMChatGenerator` sends it to `google/gemma-4-26B-A4B-it`. The system prompt tells the model that the candidates have already been ranked, and that it must:
+
+* Write one block per candidate, in a fixed format
+* Describe the morphology using only the stored visual description
+* Report the metadata fields in a fixed order, writing "Not available" for missing ones
+* Keep stored values and units unchanged, and not infer, estimate or normalise them
+* Not rank, score or compare candidates, and not use external knowledge
+
+Output format per candidate:
 
 ```text
-Retrieved documents
-        │
-        ▼
-Prompt construction
-        │
-        ▼
-       LLM
-        │
-        ▼
-Generated response
+**Image <ID>**
+
+**Morphology:** <brief description>
+
+**Metadata:** <field>: <value> | <field>: <value> | …
 ```
 
-The LLM therefore acts primarily as the generation and interpretation component of the RAG system, while the retrieval pipeline is responsible for finding the relevant SEM samples.
+| Pipeline | Metadata fields, in order |
+| -------- | ------------------------- |
+| `RAG-Qwen` | Category, Detector, Pixel size, Magnification, Accelerating voltage, Working distance, Brightness, Contrast, Scan Speed, Frame Average, Line Average |
+| `RAG-LAME` | Magnification, Accelerating voltage, Emission current, Dwell time, Working distance, Scan mode, Detector |
 
-## Haystack Pipeline
+## Image Gallery
 
-The retrieval workflow is implemented as a Haystack pipeline and exposed through a pipeline wrapper.
+After the answer, the wrapper appends a **"Candidate images"** gallery: a numbered list with each image ID and a Markdown image that points to the thumbnail endpoint.
 
-The repository currently contains multiple retrieval wrappers under:
+| Pipeline | Thumbnail URL | Qdrant lookup |
+| -------- | ------------- | ------------- |
+| `RAG-Qwen` | `{THUMBNAIL_BASE_URL}/{id}.png`, default `https://llm-rag.dev.rd.areasciencepark.it/rag-images` | `SEM_qwen`, `meta.SEMImageID` |
+| `RAG-LAME` | `https://llm-rag.dev.rd.areasciencepark.it/rag-images-lame/{id}.png` (hard-coded) | `LAME_qwen`, `meta.image_id` |
+
+The endpoints are defined in `render/app.py`, which is the retrieval service's entry point (see [Deployment](#deployment)). They read the `thumb_b64` payload field of the matching point, decode it and return a PNG (404 if not found). The Open WebUI ingress (`k8s/open_webui/ingress.yaml`) routes `/rag-images` and `/rag-images-lame` to the retrieval service, so the browser loads the thumbnails from the same host as Open WebUI.
+
 ```text
-pipeline_wrappers/
-├── RAG-Qwen/
-└── RAG-Test/
+Retrieved document ─► image ID ─► /rag-images/{id}.png ─► Qdrant (thumb_b64) ─► PNG ─► Open WebUI
 ```
 
-These wrappers allow different retrieval configurations to be deployed and tested independently.
+## Streaming
 
-## Retrieval Service
+Retrieval always runs synchronously first, so a zero-result query can be answered before the LLM is called. After that:
 
-The retrieval pipeline can be deployed as an independent service.
+* **`stream=true`**: Hayhooks' `streaming_generator` streams the Gemma answer token by token, and the gallery is appended when generation ends (`on_pipeline_end`).
+* **`stream=false`**: the generation pipeline runs to completion and the answer is returned with the gallery appended.
 
-The Docker image is defined by `docker/Dockerfile.retrieval` and the corresponding Kubernetes configuration is located under `k8s/retrieval/`.
+## Haystack Pipelines
 
-The service can therefore be deployed independently of the indexing and upload components.
+Each wrapper builds **two** pipelines in `setup()`.
+
+Retrieval pipeline:
+
+```text
+QueryEmbedder ──embedding──► QdrantEmbeddingRetriever (top_k=50) ──documents──► MMRReranker (top_k=5)
+      │                              ▲ filters                                       ▲
+      │                              │                                               │
+      └──────────────embedding───────┼───────────────────────────────────────────────┘
+                                     │                               (query_embedding)
+QueryMetadataExtractor ──────────────┘
+```
+
+Generation pipeline:
+
+```text
+ChatPromptBuilder ──► VLLMChatGenerator (Gemma 4) ──► AnswerBuilder
+```
+
+`run_chat_completion()` extracts the query, runs the retrieval pipeline, handles the zero-result case, and then runs the generation pipeline (streamed or not).
+
+### Where the code lives
+
+The components (`QueryMetadataExtractor`, `QueryEmbedder`, `MMRReranker`), the metadata schema and the prompts are defined **inline in each wrapper**, because the Docker image does not install the `sem_rag` package.
+
+The notebooks and evaluations use the same logic from the package:
+
+* `src/sem_rag/retrieval/components.py`: the components, parameterised by schema and system prompt
+* `src/sem_rag/retrieval/schemas/sem.py` and `lame.py`: `METADATA_SCHEMA` and `EXTRACTION_SYSTEM_PROMPT`
+
+**Any change to a component, schema or prompt must be applied in both places.**
+
+### Configuration
+
+| Variable | Used by | Default |
+| -------- | ------- | ------- |
+| `VLLM_API_KEY` | both wrappers | none (from the `vllm-api-key` secret) |
+| `VLLM_API_URL` | both wrappers | `https://orfeo-llm.areasciencepark.it/vllm/v1` |
+| `QDRANT_URL` | both wrappers, `render/app.py` | `http://qdrant.orfeo-rag.svc.cluster.local:6333` (set by the `rag-config` ConfigMap) |
+
+Model names, `MMR_CANDIDATES`, `TOP_K`, λ and the collection name are constants at the top of each wrapper.
+
+## Deployment
+
+The retrieval service image is built from `docker/Dockerfile.retrieval`:
+
+```text
+/srv
+├── app.py                          # render/app.py
+└── pipeline_wrappers/
+    ├── RAG-Qwen/pipeline_wrapper.py
+    └── RAG-LAME/pipeline_wrapper.py
+```
+
+The container runs `uvicorn app:hayhooks` on port 1416. `render/app.py` creates the Hayhooks FastAPI app with `create_app()`, so at startup Hayhooks still auto-deploys every wrapper found in `HAYHOOKS_PIPELINES_DIR` (`/srv/pipeline_wrappers`). The same app also serves the thumbnail endpoints. One service therefore exposes all pipelines (as OpenAI-compatible models under `/v1`) plus the thumbnails.
+
+The Kubernetes manifests are in `k8s/retrieval/`. Build and deployment steps are in [docker/README.md](../docker/README.md) and [k8s/README.md](../k8s/README.md).
