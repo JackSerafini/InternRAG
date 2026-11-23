@@ -1067,7 +1067,11 @@ class QueryMetadataExtractor():
                 model=GENERATION_MODEL_ID, 
                 api_key=get_vllm_secret(), 
                 api_base_url=API_URL, 
-                generation_kwargs={"response_format": {"type": "json_object"}}
+                generation_kwargs={
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.0,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                },
             )
         )
         self.pipeline.connect("builder", "llm")
